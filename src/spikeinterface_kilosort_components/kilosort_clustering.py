@@ -136,21 +136,21 @@ s
         # features
         node0 = PeakRetriever(recording, peaks)
 
+        Nchan = recording.get_num_channels()
+        sparsity_mask = np.zeros((Nchan, Nchan), dtype=bool)
+        channel_distance = get_channel_distances(recording)
+        closest_channels = np.argsort(channel_distance, axis=1)
+        for count, valid in enumerate(closest_channels):
+            sparsity_mask[count, valid[:params["n_nearest_channels"]]] = True
+
         node1 = ExtractSparseWaveforms(
             recording,
             parents=[node0],
             return_output=False,
             ms_before=ms_before,
             ms_after=ms_after,
+            sparsity_mask=sparsity_mask
         )
-
-        ### KS is considering the closest n_nearest_channels for every channels, so we need
-        ### here a small hack for the waveformextractor
-        closest_channels = np.argsort(node1.channel_distance, axis=1)
-        node1.neighbours_mask[:] = False
-        for count, valid in enumerate(closest_channels):
-            node1.neighbours_mask[count, valid[:params["n_nearest_channels"]]] = True
-        node1.max_num_chans = np.max(np.sum(node1.neighbours_mask, axis=1))
 
         node2 = TemporalPCAProjection(
             recording, parents=[node0, node1], return_output=True, model_folder_path=model_folder
@@ -206,12 +206,15 @@ s
         dminx = 32
         nskip = params['cluster_downsampling']
         ycent = y_centers(ycup, dmin)
-        print(ycent)
+        
         xcent = x_centers(xcup)
         nsp = len(peaks)
         Nchan = recording.get_num_channels()
         n_pca = params['n_svd']
         nearest_center, _, _ = get_nearest_centers(xy, xcent, ycent)
+        print(nearest_center, len(xcent), len(ycent))
+        #import sys
+        #sys.exit()
 
         clu = np.zeros(nsp, 'int32')
         Wall = torch.zeros((0, Nchan, n_pca))
@@ -224,7 +227,8 @@ s
             for kk in tqdm(prog):
                 for jj in np.arange(len(xcent)):
                     # Get data for all templates that were closest to this x,y center.
-                    ii = kk + jj*ycent.size
+                    ii = kk + jj*(len(xcent))
+                    print(ii)
                     if ii not in nearest_center:
                         # No templates are nearest to this center, skip it.
                         continue
