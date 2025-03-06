@@ -193,13 +193,7 @@ s
         #             prototype=prototype, **job_kwargs)
 
         iclust_template = peaks['channel_index']
-        sparse_mask = node1.neighbours_mask
-
-        iC = np.zeros((sparse_mask.sum(1).max(), len(sparse_mask)), dtype='int32')
-        for channel_ind in range(len(iC)):
-            chan_inds, = np.nonzero(sparse_mask[channel_ind])
-            iC[:len(chan_inds), channel_ind] = chan_inds
-
+        iC, _ = nearest_chans(ycup, ycup, xcup, xcup, params["n_nearest_channels"])
         iC = torch.as_tensor(iC, device=params["torch_device"])
 
         dmin  = np.median(np.diff(np.unique(ycup)))
@@ -212,9 +206,6 @@ s
         Nchan = recording.get_num_channels()
         n_pca = params['n_svd']
         nearest_center, _, _ = get_nearest_centers(xy, xcent, ycent)
-        print(nearest_center, len(xcent), len(ycent))
-        #import sys
-        #sys.exit()
 
         clu = np.zeros(nsp, 'int32')
         Wall = torch.zeros((0, Nchan, n_pca))
@@ -228,16 +219,15 @@ s
                 for jj in np.arange(len(xcent)):
                     # Get data for all templates that were closest to this x,y center.
                     ii = kk + jj*(len(xcent))
-                    print(ii)
                     if ii not in nearest_center:
                         # No templates are nearest to this center, skip it.
                         continue
                     ix = (nearest_center == ii)
+                    ntemp = ix.sum()
                     Xd, ch_min, ch_max, igood  = get_data_cpu(
                         xy, iC, iclust_template, tF, ycent[kk], xcent[jj],
                         dmin=dmin, dminx=dminx, ix=ix
                         )
-
                     if Xd is None:
                         nearby_chans_empty += 1
                         continue
@@ -290,6 +280,12 @@ s
 
         return np.unique(clu), clu
         
+
+def nearest_chans(ys, yc, xs, xc, nC):
+    ds = (ys - yc[:,np.newaxis])**2 + (xs - xc[:,np.newaxis])**2
+    iC = np.argsort(ds, 0)[:nC]
+    ds = np.sort(ds, 0)[:nC]
+    return iC, ds
 
 
 def neigh_mat(Xd, nskip=10, n_neigh=30):
@@ -629,13 +625,11 @@ def get_data_cpu(xy, iC, PID, tF, ycenter, xcenter, dmin=20, dminx=32,
     y0 = ycenter # xy[1].mean() - ycenter
     x0 = xcenter #xy[0].mean() - xcenter
 
-    #print(dmin, dminx)
     if ix is None:
         ix = torch.logical_and(
             torch.abs(xy[1] - y0) < dmin,
             torch.abs(xy[0] - x0) < dminx
             )
-    #print(ix.nonzero()[:,0])
     igood = ix[PID].nonzero()[:,0]
 
     if len(igood)==0:
@@ -649,6 +643,7 @@ def get_data_cpu(xy, iC, PID, tF, ycenter, xcenter, dmin=20, dminx=32,
     ch_min = torch.min(ichan)
     ch_max = torch.max(ichan)+1
     nchan = ch_max - ch_min
+
     dd = torch.zeros((nspikes, nchan, nfeatures))
 
     for j in ix.nonzero()[:, 0]:
@@ -782,7 +777,6 @@ def maketree(M, iclust, iclust0):
 ####################### Functions taken from swarmsplitter ######################
 
 import numpy as np
-from numba import njit
 import math
 
 def count_elements(kk, iclust, my_clus, xtree):
@@ -845,7 +839,6 @@ def refractoriness(st1, st2):
 
 def split(Xd, xtree, tstat, iclust, my_clus, verbose = True, meta = None):
     xtree = np.array(xtree)
-
     kk = xtree.shape[0]-1
     nc = xtree.shape[0] + 1
     valid_merge = np.ones((nc-1,), 'bool')
@@ -903,7 +896,6 @@ def new_clusters(iclust, my_clus, xtree, tstat):
     if len(xtree)==0:
         return np.zeros_like(iclust)
          
-
     nc = xtree.max() + 1
 
     isleaf = np.zeros(2*nc-1,)
