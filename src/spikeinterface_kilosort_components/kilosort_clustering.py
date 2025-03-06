@@ -58,8 +58,12 @@ class KiloSortClustering:
     by Marius Patchitariu and collaborators
 
     This code can only used in the context of spikeinterface.sortingcomponents in the context of the nodepipeline, and mostly
-    for benchmark purposes. Note that parameters are taken/adapted from KS, results should be similar but not exactly alike
-s    
+    for benchmark purposes. Note that parameters are taken/adapted from KS, results should be similar but not exactly alike. 
+    
+    In particular, for now the upsampling of the grid is not taken into account. This could be done at a minor cost, but to 
+    avoid messing around too much with the internal data structures, we made the choice here to not port this option. Note that
+    benchmarks seems to show that such an upsampling is not leading to a big improvements in the results
+
     """
 
     _default_params = {
@@ -223,7 +227,6 @@ s
                         # No templates are nearest to this center, skip it.
                         continue
                     ix = (nearest_center == ii)
-                    ntemp = ix.sum()
                     Xd, ch_min, ch_max, igood  = get_data_cpu(
                         xy, iC, iclust_template, tF, ycent[kk], xcent[jj],
                         dmin=dmin, dminx=dminx, ix=ix
