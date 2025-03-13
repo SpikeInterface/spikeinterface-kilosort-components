@@ -45,6 +45,7 @@ spike_dtype = _base_matching_dtype
 
 
 from scipy.sparse import csr_matrix
+from spikeinterface.sortingcomponents.clustering.peak_svd import extract_peaks_svd
 import numpy as np
 
 
@@ -68,7 +69,6 @@ class KiloSortClustering:
 
     _default_params = {
         "n_svd": 5,
-        "tmp_folder": None,
         "ms_before": 2,
         "ms_after": 2,
         "verbose": True,
@@ -86,59 +86,8 @@ class KiloSortClustering:
         if params['engine'] != 'torch':
             raise Exception('Not yet implemented!')
 
-        fs = recording.get_sampling_frequency()
         ms_before = params["ms_before"]
         ms_after = params["ms_after"]
-        nbefore = int(ms_before * fs / 1000.0)
-        nafter = int(ms_after * fs / 1000.0)
-        if params["tmp_folder"] is None:
-            name = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
-            tmp_folder = get_global_tmp_folder() / name
-        else:
-            tmp_folder = Path(params["tmp_folder"]).absolute()
-
-        tmp_folder.mkdir(parents=True, exist_ok=True)
-
-        # SVD for time compression
-        few_peaks = select_peaks(
-            peaks, recording=recording, method="uniform", n_peaks=10000, margin=(nbefore, nafter)
-        )
-        few_wfs = extract_waveform_at_max_channel(
-            recording, few_peaks, ms_before=ms_before, ms_after=ms_after, **job_kwargs
-        )
-        wfs = few_wfs[:, :, 0]
-        
-        # Remove outliers
-        valid = np.argmax(np.abs(wfs), axis=1) == nbefore
-        wfs = wfs[valid]
-
-        prototype = np.nanmedian(wfs, 0) 
-
-        # Ensure all waveforms have a positive max
-        wfs *= np.sign(wfs[:, nbefore])[:, np.newaxis]
-
-        from sklearn.decomposition import TruncatedSVD
-
-        tsvd = TruncatedSVD(params["n_svd"])
-        tsvd.fit(wfs)
-
-        model_folder = tmp_folder / "tsvd_model"
-
-        model_folder.mkdir(exist_ok=True)
-        with open(model_folder / "pca_model.pkl", "wb") as f:
-            pickle.dump(tsvd, f)
-
-        model_params = {
-            "ms_before": ms_before,
-            "ms_after": ms_after,
-            "sampling_frequency": float(fs),
-        }
-
-        with open(model_folder / "params.json", "w") as f:
-            json.dump(model_params, f)
-
-        # features
-        node0 = PeakRetriever(recording, peaks)
 
         Nchan = recording.get_num_channels()
         sparsity_mask = np.zeros((Nchan, Nchan), dtype=bool)
@@ -147,38 +96,18 @@ class KiloSortClustering:
         for count, valid in enumerate(closest_channels):
             sparsity_mask[count, valid[:params["n_nearest_channels"]]] = True
 
-        node1 = ExtractSparseWaveforms(
-            recording,
-            parents=[node0],
-            return_output=False,
+        tF, sparse_mask, _ = extract_peaks_svd(
+            recording, 
+            peaks,
+            n_components=params["n_svd"],
             ms_before=ms_before,
             ms_after=ms_after,
-            sparsity_mask=sparsity_mask
+            motion_aware=False,
+            motion=None,
+            sparsity_mask=sparsity_mask,
+            **job_kwargs
         )
 
-        node2 = TemporalPCAProjection(
-            recording, parents=[node0, node1], return_output=True, model_folder_path=model_folder
-        )
-
-        pipeline_nodes = [node0, node1, node2]
-
-        features_folder = tmp_folder / "tsvd_features"
-        features_folder.mkdir(exist_ok=True)
-
-        _ = run_node_pipeline(
-            recording,
-            pipeline_nodes,
-            job_kwargs,
-            job_name="extracting features",
-            gather_mode="npy",
-            gather_kwargs=dict(exist_ok=True),
-            folder=features_folder,
-            names=["sparse_tsvd"],
-        )
-
-        from spikeinterface.sortingcomponents.clustering.tools import FeaturesLoader
-
-        tF = FeaturesLoader.from_dict_or_folder(features_folder)["sparse_tsvd"]
         tF = np.swapaxes(tF, 1, 2)
         tF = torch.as_tensor(tF, device=params["torch_device"])
 
@@ -259,12 +188,12 @@ class KiloSortClustering:
                     nmax += Nfilt
 
                     # we need the new templates here         
-                    W = torch.zeros((Nfilt, Nchan, params['n_svd']))
+                    templates = torch.zeros((Nfilt, Nchan, params['n_svd']))
                     for j in range(Nfilt):
                         w = Xd[iclust==j].mean(0)
-                        W[j, ch_min:ch_max, :] = torch.reshape(w, (-1, params['n_svd'])).cpu()
+                        templates[j, ch_min:ch_max, :] = torch.reshape(w, (-1, params['n_svd'])).cpu()
                     
-                    Wall = torch.cat((Wall, W), 0)
+                    templates = torch.cat((templates, templates), 0)
 
         except:
             raise
@@ -281,7 +210,7 @@ class KiloSortClustering:
                 'Wall is empty after `clustering_qr.run`, cannot continue clustering.'
             )
 
-        return np.unique(clu), clu
+        return np.unique(clu), clu, templates
         
 
 def nearest_chans(ys, yc, xs, xc, nC):
