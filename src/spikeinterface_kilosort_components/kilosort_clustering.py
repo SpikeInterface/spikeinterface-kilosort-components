@@ -71,8 +71,7 @@ class KiloSortClustering:
         "n_svd": 5,
         "ms_before": 2,
         "ms_after": 2,
-        "verbose": True,
-        "debug": False,
+        "verbose": False,
         "engine": "torch",
         "torch_device": "cpu",
         "cluster_downsampling": 20,
@@ -110,6 +109,7 @@ class KiloSortClustering:
 
         tF = np.swapaxes(tF, 1, 2)
         tF = torch.as_tensor(tF, device=params["torch_device"])
+        print(tF.shape, tF.mean())
 
         xcup, ycup = recording.get_channel_locations()[:, 0], recording.get_channel_locations()[:, 1]
         xy = xy_up(xcup, ycup)
