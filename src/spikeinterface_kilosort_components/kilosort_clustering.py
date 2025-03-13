@@ -95,7 +95,7 @@ class KiloSortClustering:
         for count, valid in enumerate(closest_channels):
             sparsity_mask[count, valid[:params["n_nearest_channels"]]] = True
 
-        tF, sparse_mask, _ = extract_peaks_svd(
+        tF, sparse_mask, svd_model = extract_peaks_svd(
             recording, 
             peaks,
             n_components=params["n_svd"],
@@ -106,10 +106,10 @@ class KiloSortClustering:
             sparsity_mask=sparsity_mask,
             **job_kwargs
         )
+        
 
         tF = np.swapaxes(tF, 1, 2)
         tF = torch.as_tensor(tF, device=params["torch_device"])
-        print(tF.shape, tF.mean())
 
         xcup, ycup = recording.get_channel_locations()[:, 0], recording.get_channel_locations()[:, 1]
         xy = xy_up(xcup, ycup)
@@ -188,12 +188,12 @@ class KiloSortClustering:
                     nmax += Nfilt
 
                     # we need the new templates here         
-                    templates = torch.zeros((Nfilt, Nchan, params['n_svd']))
+                    W = torch.zeros((Nfilt, Nchan, params['n_svd']))
                     for j in range(Nfilt):
                         w = Xd[iclust==j].mean(0)
-                        templates[j, ch_min:ch_max, :] = torch.reshape(w, (-1, params['n_svd'])).cpu()
+                        W[j, ch_min:ch_max, :] = torch.reshape(w, (-1, params['n_svd'])).cpu()
                     
-                    templates = torch.cat((templates, templates), 0)
+                    Wall = torch.cat((Wall, W), 0)
 
         except:
             raise
@@ -210,7 +210,28 @@ class KiloSortClustering:
                 'Wall is empty after `clustering_qr.run`, cannot continue clustering.'
             )
 
-        return np.unique(clu), clu, templates
+        labels_set = np.unique(clu)
+        fs = recording.get_sampling_frequency()
+        nbefore = int(ms_before * fs / 1000.0)
+        nafter = int(ms_after * fs / 1000.0)
+        templates_array = np.zeros((len(Wall), nbefore+nafter, Nchan), dtype=np.float32)
+        for unit_ind, label in enumerate(labels_set):
+            templates_array[unit_ind] = svd_model.inverse_transform(Wall[unit_ind]).T
+
+        unit_ids = np.arange(len(labels_set))
+        from spikeinterface.core.template import Templates
+        templates = Templates(
+            templates_array=templates_array,
+            sampling_frequency=fs,
+            nbefore=nbefore,
+            sparsity_mask=None,
+            channel_ids=recording.channel_ids,
+            unit_ids=unit_ids,
+            probe=recording.get_probe(),
+            is_scaled=False,
+        ) 
+
+        return labels_set, clu, templates
         
 
 def nearest_chans(ys, yc, xs, xc, nC):
