@@ -157,7 +157,7 @@ class KiloSortClustering:
                         continue
                     ix = (nearest_center == ii)
                     Xd, ch_min, ch_max, igood  = get_data_cpu(
-                        xy, iC, iclust_template, tF, ycent[kk], xcent[jj],
+                        xy, iC, iclust_template.copy(), tF, ycent[kk], xcent[jj],
                         dmin=dmin, dminx=dminx, ix=ix
                         )
                     if Xd is None:
