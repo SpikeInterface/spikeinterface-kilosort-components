@@ -36,11 +36,8 @@ class KiloSortMatching(BaseTemplateMatching):
 
     ..code::
 
-        from spikeinterface.sortingcomponents.tools import extract_waveform_at_max_channel
-        from spikeinterface.sortingcomponents.peak_detection import detect_peaks
-        peaks = detect_peaks(sorting_analyzer.recording, method="locally_exclusive", skip_after_n_peaks=5000)
-        few_wfs = extract_waveform_at_max_channel(sorting_analyzer.recording, peaks, ms_before=1, ms_after=2)
-        wfs = few_wfs[:, :, 0]
+        from spikeinterface.sortingcomponents.tools import get_prototype_and_waveforms
+        prototype, wfs, _ = get_prototype_and_waveforms(recording, ms_before=1, ms_after=2)
         import numpy as np
         n_components = 5
 
