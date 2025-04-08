@@ -211,27 +211,27 @@ class KiloSortClustering:
             )
 
         labels_set = np.unique(clu)
-        fs = recording.get_sampling_frequency()
-        nbefore = int(ms_before * fs / 1000.0)
-        nafter = int(ms_after * fs / 1000.0)
-        templates_array = np.zeros((len(Wall), nbefore+nafter, Nchan), dtype=np.float32)
-        for unit_ind, label in enumerate(labels_set):
-            templates_array[unit_ind] = svd_model.inverse_transform(Wall[unit_ind]).T
+        # fs = recording.get_sampling_frequency()
+        # nbefore = int(ms_before * fs / 1000.0)
+        # nafter = int(ms_after * fs / 1000.0)
+        # templates_array = np.zeros((len(Wall), nbefore+nafter, Nchan), dtype=np.float32)
+        # for unit_ind, label in enumerate(labels_set):
+        #     templates_array[unit_ind] = svd_model.inverse_transform(Wall[unit_ind]).T
 
-        unit_ids = np.arange(len(labels_set))
-        from spikeinterface.core.template import Templates
-        templates = Templates(
-            templates_array=templates_array,
-            sampling_frequency=fs,
-            nbefore=nbefore,
-            sparsity_mask=None,
-            channel_ids=recording.channel_ids,
-            unit_ids=unit_ids,
-            probe=recording.get_probe(),
-            is_scaled=False,
-        ) 
+        # unit_ids = np.arange(len(labels_set))
+        # from spikeinterface.core.template import Templates
+        # templates = Templates(
+        #     templates_array=templates_array,
+        #     sampling_frequency=fs,
+        #     nbefore=nbefore,
+        #     sparsity_mask=None,
+        #     channel_ids=recording.channel_ids,
+        #     unit_ids=unit_ids,
+        #     probe=recording.get_probe(),
+        #     is_scaled=False,
+        # ) 
 
-        return labels_set, clu, templates
+        return labels_set, clu, svd_model, tF, sparse_mask
         
 
 def nearest_chans(ys, yc, xs, xc, nC):
