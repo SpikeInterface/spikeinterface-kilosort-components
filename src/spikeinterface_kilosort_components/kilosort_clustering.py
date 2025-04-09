@@ -231,7 +231,7 @@ class KiloSortClustering:
         #     is_scaled=False,
         # ) 
 
-        return labels_set, clu, svd_model, tF, sparse_mask
+        return labels_set, clu, svd_model, np.swapaxes(tF, 2, 1), sparse_mask
         
 
 def nearest_chans(ys, yc, xs, xc, nC):
