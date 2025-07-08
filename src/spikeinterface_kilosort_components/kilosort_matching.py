@@ -168,14 +168,17 @@ class KiloSortMatching(BaseTemplateMatching):
         return self.margin
 
     def clean(self):
-        if self.shared_memory:
-            del self.ctc
+        if self.shared_memory and self.shm is not None:
+            self.ctc = None
             self.shm.close()
             self.shm.unlink()
+            self.shm = None
 
     def __del__(self):
-        if self.shared_memory:
+        if self.shared_memory and self.shm is not None:
+            self.ctc = None
             self.shm.close()
+            self.shm = None
 
     def _push_to_torch(self):
         # this is a trick to delay the creation of tensor on GPU to enable multi processing
