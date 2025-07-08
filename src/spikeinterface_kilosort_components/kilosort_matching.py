@@ -70,7 +70,7 @@ class KiloSortMatching(BaseTemplateMatching):
     ):
 
         import scipy
-
+        
         BaseTemplateMatching.__init__(self, recording, templates, return_output=True, parents=None)
         self.templates_array = self.templates.get_dense_templates()
         self.spatial_components = spatial_components
@@ -169,8 +169,13 @@ class KiloSortMatching(BaseTemplateMatching):
 
     def clean(self):
         if self.shared_memory:
+            del self.ctc
             self.shm.close()
             self.shm.unlink()
+
+    def __del__(self):
+        if self.shared_memory:
+            self.shm.close()
 
     def _push_to_torch(self):
         # this is a trick to delay the creation of tensor on GPU to enable multi processing
