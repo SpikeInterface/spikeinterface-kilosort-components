@@ -66,10 +66,11 @@ class KiloSortMatching(BaseTemplateMatching):
         max_iter=100,
         engine="torch",
         torch_device="cpu",
+        shared_memory=True
     ):
 
         import scipy
-
+        
         BaseTemplateMatching.__init__(self, recording, templates, return_output=True, parents=None)
         self.templates_array = self.templates.get_dense_templates()
         self.spatial_components = spatial_components
@@ -78,6 +79,7 @@ class KiloSortMatching(BaseTemplateMatching):
         self.max_iter = max_iter
         self.engine = engine
         self.torch_device = torch_device
+        self.shared_memory = shared_memory
 
         self.num_components = len(self.temporal_components)
         self.num_templates = len(self.templates_array)
@@ -148,6 +150,13 @@ class KiloSortMatching(BaseTemplateMatching):
             self.ctc = np.einsum("ijkm, kml -> ijl", UtU, WtW)
             self.trange = np.arange(-self.num_samples, self.num_samples + 1, device=self.torch_device)
 
+        if self.shared_memory:
+            from spikeinterface.core.core_tools import make_shared_array
+            arr, shm = make_shared_array(self.ctc.shape, dtype=np.float32)
+            arr[:] = self.ctc
+            self.ctc = arr
+            self.shm = shm
+
         self.nbefore = self.templates.nbefore
         self.nafter = self.templates.nafter
         self.margin = self.num_samples
@@ -158,6 +167,18 @@ class KiloSortMatching(BaseTemplateMatching):
     def get_trace_margin(self):
         return self.margin
 
+    def clean(self):
+        if self.shared_memory and self.shm is not None:
+            self.ctc = None
+            self.shm.close()
+            self.shm.unlink()
+            self.shm = None
+
+    def __del__(self):
+        if self.shared_memory and self.shm is not None:
+            self.ctc = None
+            self.shm.close()
+            self.shm = None
 
     def _push_to_torch(self):
         # this is a trick to delay the creation of tensor on GPU to enable multi processing
