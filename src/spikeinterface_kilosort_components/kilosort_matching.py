@@ -198,7 +198,8 @@ class KiloSortMatching(BaseTemplateMatching):
             self._push_to_torch()
 
         if self.engine == "torch":
-            X = torch.as_tensor(traces.T, device=self.torch_device)
+            # copy is needed for torch
+            X = torch.as_tensor(traces.T.copy(), device=self.torch_device)
             B = conv1d(X.unsqueeze(1), self.W.unsqueeze(1), padding=self.num_samples // 2)
             B = torch.einsum("ijk, kjl -> il", self.U, B)
 

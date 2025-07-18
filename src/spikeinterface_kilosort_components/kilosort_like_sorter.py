@@ -53,8 +53,6 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         "selection": {"n_peaks_per_channel": 5000, "min_n_peaks": 20000},
         "clustering": {
             "n_svd": 5,
-            "ms_before": 2,
-            "ms_after": 2,
             "verbose": False,
             "engine": "torch",
             "torch_device": "cpu",
@@ -105,6 +103,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         from spikeinterface.sortingcomponents.peak_selection import select_peaks
         from spikeinterface.sortingcomponents.clustering.main import find_cluster_from_peaks
         from spikeinterface.sortingcomponents.matching import find_spikes_from_templates
+        from spikeinterface.sortingcomponents.clustering.tools import get_templates_from_peaks_and_svd
         from spikeinterface.sortingcomponents.tools import remove_empty_templates
         from spikeinterface.preprocessing import correct_motion
         from spikeinterface.sortingcomponents.motion import InterpolateMotionRecording
@@ -162,17 +161,21 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
 
         noise_levels = get_noise_levels(recording, return_scaled=False)
 
+        # this will be propagated over several methods
+        ms_before = params['waveforms']['ms_before']
+        ms_after = params['waveforms']['ms_after']
+
         # detection
         prototype, waveforms, _ = get_prototype_and_waveforms_from_recording(
             recording,
             n_peaks=10000,
-            ms_before=params['waveforms']['ms_before'],
-            ms_after=params['waveforms']['ms_after'],
+            ms_before=ms_before,
+            ms_after=ms_after,
             **job_kwargs,
         )
         detection_params = params["detection"].copy()
         detection_params["prototype"] = prototype
-        detection_params["ms_before"] = params['waveforms']['ms_before']
+        detection_params["ms_before"] = ms_before
         all_peaks = detect_peaks(recording, method="matched_filtering", **detection_params, **job_kwargs)
 
         if verbose:
@@ -188,6 +191,8 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             print(f"select_peaks(): {len(peaks)} peaks kept for clustering")
 
         clustering_kwargs = params["clustering"].copy()
+        clustering_kwargs["ms_before"] = ms_before
+        clustering_kwargs["ms_after"] = ms_after
         unit_ids, clustering_label, more_outs = find_cluster_from_peaks(
             recording, peaks, method="kilosort-clustering", method_kwargs=clustering_kwargs, extra_outputs=True, **job_kwargs
         )
@@ -203,27 +208,38 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             print(f"find_cluster_from_peaks(): {sorting_pre_peeler.unit_ids.size} cluster found")
 
 
-        nbefore = int(params["waveforms"]["ms_before"] * sampling_frequency / 1000.0)
-        nafter = int(params["waveforms"]["ms_after"] * sampling_frequency / 1000.0)
+        # nbefore = int(params["waveforms"]["ms_before"] * sampling_frequency / 1000.0)
+        # nafter = int(params["waveforms"]["ms_after"] * sampling_frequency / 1000.0)
+        # templates_array = estimate_templates_with_accumulator(
+        #     recording,
+        #     sorting_pre_peeler.to_spike_vector(),
+        #     sorting_pre_peeler.unit_ids,
+        #     nbefore,
+        #     nafter,
+        #     return_scaled=False,
+        #     **job_kwargs,
+        # )
+        # templates_dense = Templates(
+        #     templates_array=templates_array,
+        #     sampling_frequency=sampling_frequency,
+        #     nbefore=nbefore,
+        #     channel_ids=recording.channel_ids,
+        #     unit_ids=sorting_pre_peeler.unit_ids,
+        #     sparsity_mask=None,
+        #     probe=recording.get_probe(),
+        #     is_scaled=False,
+        # )
 
-        templates_array = estimate_templates_with_accumulator(
+        templates_dense, _ = get_templates_from_peaks_and_svd(
             recording,
-            sorting_pre_peeler.to_spike_vector(),
-            sorting_pre_peeler.unit_ids,
-            nbefore,
-            nafter,
-            return_scaled=False,
-            **job_kwargs,
-        )
-        templates_dense = Templates(
-            templates_array=templates_array,
-            sampling_frequency=sampling_frequency,
-            nbefore=nbefore,
-            channel_ids=recording.channel_ids,
-            unit_ids=sorting_pre_peeler.unit_ids,
-            sparsity_mask=None,
-            probe=recording.get_probe(),
-            is_scaled=False,
+            peaks,
+            clustering_label,
+            ms_before,
+            ms_after,
+            more_outs["svd_model"],
+            more_outs["peaks_svd"],
+            more_outs["peak_svd_sparse_mask"],
+            operator="median",
         )
 
         sparsity_threshold = params["templates"]["sparsity_threshold"]
@@ -293,19 +309,13 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             np.save(sorter_output_folder / "spikes.npy", spikes)
             templates.to_zarr(sorter_output_folder / "templates.zarr")
 
-        # final_spikes = np.zeros(spikes.size, dtype=minimum_spike_dtype)
-        # final_spikes["sample_index"] = spikes["sample_index"]
-        # final_spikes["unit_index"] = spikes["cluster_index"]
-        # final_spikes["segment_index"] = spikes["segment_index"]
-        # sorting = NumpySorting(final_spikes, sampling_frequency, templates.unit_ids)
-
         sorting = sorting.save(folder=sorter_output_folder / "sorting")
 
         return sorting
 
 
-import spikeinterface.sorters.sorterlist
+# import spikeinterface.sorters.sorterlist
 
-if Kilosort4LikeSorter not in spikeinterface.sorters.sorterlist.sorter_full_list:
-    spikeinterface.sorters.sorterlist.sorter_full_list.append(Kilosort4LikeSorter)
-    spikeinterface.sorters.sorterlist.sorter_dict[Kilosort4LikeSorter.sorter_name] = Kilosort4LikeSorter
+# if Kilosort4LikeSorter not in spikeinterface.sorters.sorterlist.sorter_full_list:
+#     spikeinterface.sorters.sorterlist.sorter_full_list.append(Kilosort4LikeSorter)
+#     spikeinterface.sorters.sorterlist.sorter_dict[Kilosort4LikeSorter.sorter_name] = Kilosort4LikeSorter
