@@ -1,27 +1,7 @@
 import numpy as np
 
-from spikeinterface.sortingcomponents.matching.base import BaseTemplateMatching, _base_matching_dtype
-
-try:
-    import torch
-    HAVE_TORCH = True
-except ImportError:
-    HAVE_TORCH = False
-
-
-
-import random, string
 from spikeinterface.core import get_global_tmp_folder
-from spikeinterface.sortingcomponents.peak_selection import select_peaks
-from spikeinterface.sortingcomponents.waveforms.temporal_pca import TemporalPCAProjection
-from spikeinterface.sortingcomponents.tools import extract_waveform_at_max_channel
 from spikeinterface.core.recording_tools import get_channel_distances
-import pickle, json
-from spikeinterface.core.node_pipeline import (
-    run_node_pipeline,
-    ExtractSparseWaveforms,
-    PeakRetriever,
-)
 
 import gc
 
@@ -32,20 +12,18 @@ from scipy.sparse import csr_matrix
 from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks
 from scipy.cluster.vq import kmeans
-from pathlib import Path
 
 try:
     import faiss
 except ImportError:
     print('KiloSortClustering requires faiss installed')
 
-from tqdm import tqdm 
+from tqdm.auto import tqdm 
 
-spike_dtype = _base_matching_dtype
 
 
 from scipy.sparse import csr_matrix
-from spikeinterface.sortingcomponents.clustering.peak_svd import extract_peaks_svd
+
 import numpy as np
 
 
@@ -81,6 +59,7 @@ class KiloSortClustering:
 
     @classmethod
     def main_function(cls, recording, peaks, params, job_kwargs=dict()):
+        from spikeinterface.sortingcomponents.clustering.peak_svd import extract_peaks_svd
         
         if params['engine'] != 'torch':
             raise Exception('Not yet implemented!')

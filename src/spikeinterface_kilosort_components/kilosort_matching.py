@@ -150,6 +150,7 @@ class KiloSortMatching(BaseTemplateMatching):
             self.ctc = np.einsum("ijkm, kml -> ijl", UtU, WtW)
             self.trange = np.arange(-self.num_samples, self.num_samples + 1, device=self.torch_device)
 
+        self.shm = None
         if self.shared_memory:
             from spikeinterface.core.core_tools import make_shared_array
             arr, shm = make_shared_array(self.ctc.shape, dtype=np.float32)
