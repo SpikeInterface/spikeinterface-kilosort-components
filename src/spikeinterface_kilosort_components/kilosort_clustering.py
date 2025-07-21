@@ -127,7 +127,7 @@ class KiloSortClustering:
         prog = np.arange(len(ycent))
         
         try:
-            for kk in tqdm(prog):
+            for kk in tqdm(prog, desc="KS clustering"):
                 for jj in np.arange(len(xcent)):
                     # Get data for all templates that were closest to this x,y center.
                     ii = kk + jj*(len(xcent))
@@ -212,7 +212,7 @@ class KiloSortClustering:
 
         more_outs = dict(
             svd_model=svd_model,
-            peaks_svd=np.swapaxes(tF, 2, 1),
+            peaks_svd=np.swapaxes(tF.cpu(), 2, 1),
             peak_svd_sparse_mask=sparse_mask,
         )
         return labels_set, clu, more_outs
@@ -581,7 +581,7 @@ def get_data_cpu(xy, iC, PID, tF, ycenter, xcenter, dmin=20, dminx=32,
     ch_max = torch.max(ichan)+1
     nchan = ch_max - ch_min
 
-    dd = torch.zeros((nspikes, nchan, nfeatures))
+    dd = torch.zeros((nspikes, nchan, nfeatures), device=data.device)
 
     for j in ix.nonzero()[:, 0]:
         ij = torch.nonzero(pid==j)[:, 0]
@@ -593,7 +593,7 @@ def get_data_cpu(xy, iC, PID, tF, ycenter, xcenter, dmin=20, dminx=32,
         # Keep channels and features separate
         Xd = dd
 
-    return Xd, ch_min, ch_max, igood
+    return Xd.cpu(), ch_min, ch_max, igood
 
 
 

@@ -39,30 +39,27 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
     sorter_name = "kilosort4like"
 
     _default_params = {
-        # "apply_preprocessing": True,
         "apply_motion_correction": False,
         "motion_correction": {"preset": "kilosort_like"},
-        # "cache_preprocessing": {"mode": "memory", "memory_limit": 0.5, "delete_cache": True},
-        "waveforms": {
-            "ms_before": 0.5,
-            "ms_after": 1.5,
-            "radius_um": 120.0,
-        },
         "filtering": {"freq_min": 150.0, "freq_max": 10000.0, "ftype":"bessel", "filter_order": 2,},
-        "detection": {"peak_sign":"neg", "detect_threshold":5},
+        "waveforms": {
+            "ms_before": 2.,
+            "ms_after": 2.,
+            "radius_um": 80.0,
+        },
+        "detection": {"peak_sign":"neg", "detect_threshold": 6},
         "selection": {"n_peaks_per_channel": 5000, "min_n_peaks": 20000},
         "clustering": {
             "n_svd": 5,
             "verbose": False,
             "engine": "torch",
-            "torch_device": "cpu",
+            # "torch_device": "cpu",
+            "torch_device": "cuda",
             "cluster_downsampling": 20,
             "n_nearest_channels" : 10
         },
         "templates": {
-            "max_spikes_per_unit": 400,
             "sparsity_threshold": 1.5,
-            # "peak_shift_ms": 0.2,
         },
         "matching": {
             "Th" : 8,
@@ -70,18 +67,18 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             "engine" : "torch",
             "torch_device" : "cpu",
         },
+        "apply_final_auto_merge": True,
         "job_kwargs": {},
         "save_array": True,
     }
 
     _params_description = {
-        "apply_preprocessing": "Apply internal preprocessing or not",
-        # "cache_preprocessing": "A dict contaning how to cache the preprocessed recording. mode='memory' | 'folder | 'zarr' ",
+        "apply_motion_correction": "Apply motion correction or not",
+        "motion_correction" : "Parameters for motion estimation/correction",
         "waveforms": "A dictonary containing waveforms params: ms_before, ms_after, radius_um",
         "filtering": "A dictonary containing filtering params: freq_min, freq_max",
         "detection": "A dictonary containing detection params: peak_sign, detect_threshold, exclude_sweep_ms, radius_um",
         "selection": "A dictonary containing selection params: n_peaks_per_channel, min_n_peaks",
-        "svd": "A dictonary containing svd params: n_components",
         "clustering": "A dictonary containing clustering params: split_radius_um, merge_radius_um",
         "templates": "A dictonary containing waveforms params for peeler: ms_before, ms_after",
         "matching": "A dictonary containing matching params for matching: peak_shift_ms, radius_um",
@@ -93,7 +90,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
 
     @classmethod
     def get_sorter_version(cls):
-        return "2.1"
+        return "1."
 
     @classmethod
     def _run_from_folder(cls, sorter_output_folder, params, verbose):
@@ -159,7 +156,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         cache_folder = sorter_output_folder / "cache_preprocessing"
         recording = recording.save_to_folder(folder=cache_folder, **job_kwargs)
 
-        noise_levels = get_noise_levels(recording, return_scaled=False)
+        noise_levels = get_noise_levels(recording, return_scaled=False, **job_kwargs)
 
         # this will be propagated over several methods
         ms_before = params['waveforms']['ms_before']
@@ -207,29 +204,6 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         if verbose:
             print(f"find_cluster_from_peaks(): {sorting_pre_peeler.unit_ids.size} cluster found")
 
-
-        # nbefore = int(params["waveforms"]["ms_before"] * sampling_frequency / 1000.0)
-        # nafter = int(params["waveforms"]["ms_after"] * sampling_frequency / 1000.0)
-        # templates_array = estimate_templates_with_accumulator(
-        #     recording,
-        #     sorting_pre_peeler.to_spike_vector(),
-        #     sorting_pre_peeler.unit_ids,
-        #     nbefore,
-        #     nafter,
-        #     return_scaled=False,
-        #     **job_kwargs,
-        # )
-        # templates_dense = Templates(
-        #     templates_array=templates_array,
-        #     sampling_frequency=sampling_frequency,
-        #     nbefore=nbefore,
-        #     channel_ids=recording.channel_ids,
-        #     unit_ids=sorting_pre_peeler.unit_ids,
-        #     sparsity_mask=None,
-        #     probe=recording.get_probe(),
-        #     is_scaled=False,
-        # )
-
         templates_dense, _ = get_templates_from_peaks_and_svd(
             recording,
             peaks,
@@ -241,9 +215,8 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             more_outs["peak_svd_sparse_mask"],
             operator="median",
         )
-
-        sparsity_threshold = params["templates"]["sparsity_threshold"]
-        sparsity = compute_sparsity(templates_dense, method="snr", noise_levels=noise_levels, threshold=sparsity_threshold)
+        # spasify to remove zeros
+        sparsity = compute_sparsity(templates_dense, method="snr", noise_levels=noise_levels, threshold=0.1)
         templates = templates_dense.to_sparse(sparsity)
         templates = remove_empty_templates(templates)
 
@@ -277,8 +250,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
 
 
         ## DEBUG auto merge
-        auto_merge = True
-        if auto_merge:
+        if params["apply_final_auto_merge"]:
             from spikeinterface.sorters.internal.spyking_circus2 import final_cleaning_circus
 
             # max_distance_um = merging_params.get("max_distance_um", 50)
@@ -301,7 +273,8 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
 
         if params["save_array"]:
             sorting_pre_peeler = sorting_pre_peeler.save(folder=sorter_output_folder / "sorting_pre_peeler")
-
+            if params["apply_motion_correction"]:
+                motion_info["motion"].save(sorter_output_folder / "motion")
             np.save(sorter_output_folder / "noise_levels.npy", noise_levels)
             np.save(sorter_output_folder / "all_peaks.npy", all_peaks)
             np.save(sorter_output_folder / "peaks.npy", peaks)
@@ -312,10 +285,3 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         sorting = sorting.save(folder=sorter_output_folder / "sorting")
 
         return sorting
-
-
-# import spikeinterface.sorters.sorterlist
-
-# if Kilosort4LikeSorter not in spikeinterface.sorters.sorterlist.sorter_full_list:
-#     spikeinterface.sorters.sorterlist.sorter_full_list.append(Kilosort4LikeSorter)
-#     spikeinterface.sorters.sorterlist.sorter_dict[Kilosort4LikeSorter.sorter_name] = Kilosort4LikeSorter
