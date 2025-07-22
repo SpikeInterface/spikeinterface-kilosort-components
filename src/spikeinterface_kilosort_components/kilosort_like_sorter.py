@@ -123,7 +123,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             rec_for_motion = bandpass_filter(rec_for_motion, freq_min=300.0, freq_max=6000.0, dtype="float32")
             rec_for_motion = common_reference(rec_for_motion)
             if verbose:
-                print("Start correct_motion()")
+                print("Start : correct motion")
             _, motion_info = correct_motion(
                 rec_for_motion,
                 folder=sorter_output_folder / "motion",
@@ -131,7 +131,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
                 **params["motion_correction"],
             )
             if verbose:
-                print("Done correct_motion()")
+                print("Done : correct motion")
 
         recording = bandpass_filter(recording_raw, **params["filtering"], dtype="float32")
         recording = common_reference(recording)
@@ -162,7 +162,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         ms_before = params['waveforms']['ms_before']
         ms_after = params['waveforms']['ms_after']
 
-        # detection
+        ## Step : detection
         prototype, waveforms, _ = get_prototype_and_waveforms_from_recording(
             recording,
             n_peaks=10000,
@@ -176,16 +176,18 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         all_peaks = detect_peaks(recording, method="matched_filtering", **detection_params, **job_kwargs)
 
         if verbose:
-            print(f"detect_peaks(): {len(all_peaks)} peaks found")
+            print(f"detect peaks: {len(all_peaks)} peaks found")
 
-        # selection
+        ## Step : clustering
+
+        # select a subset of peaks
         selection_params = params["selection"].copy()
         n_peaks = params["selection"]["n_peaks_per_channel"] * num_chans
         n_peaks = max(selection_params["min_n_peaks"], n_peaks)
         peaks = select_peaks(all_peaks, method="uniform", n_peaks=n_peaks)
 
         if verbose:
-            print(f"select_peaks(): {len(peaks)} peaks kept for clustering")
+            print(f"select subset of peaks: {len(peaks)} peaks kept for clustering")
 
         clustering_kwargs = params["clustering"].copy()
         clustering_kwargs["ms_before"] = ms_before
@@ -204,6 +206,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         if verbose:
             print(f"find_cluster_from_peaks(): {sorting_pre_peeler.unit_ids.size} cluster found")
 
+        # create th template from the median of SVD
         templates_dense, _ = get_templates_from_peaks_and_svd(
             recording,
             peaks,
@@ -220,7 +223,10 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         templates = templates_dense.to_sparse(sparsity)
         templates = remove_empty_templates(templates)
 
-        ## peeler kilosort4 need temporal_components
+
+        ## Step : template matching
+        
+        # peeler kilosort4 need temporal_components
         n_svd = params["clustering"]["n_svd"]
         from sklearn.cluster import KMeans
         from sklearn.decomposition import TruncatedSVD
@@ -249,12 +255,15 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         sorting = NumpySorting(final_spikes, sampling_frequency, templates.unit_ids)
 
 
-        ## DEBUG auto merge
+        ## Step auto merge
         if params["apply_final_auto_merge"]:
             from spikeinterface.sorters.internal.spyking_circus2 import final_cleaning_circus
 
             # max_distance_um = merging_params.get("max_distance_um", 50)
             # merging_params["max_distance_um"] = max(max_distance_um, 2 * max_motion)
+
+            if verbose:
+                print("Start : final merge")
 
             analyzer_final =  final_cleaning_circus(
                 recording,
@@ -270,11 +279,12 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             )
             sorting = NumpySorting.from_sorting(analyzer_final.sorting)
 
+            if verbose:
+                print("Done : final merge")
+
 
         if params["save_array"]:
             sorting_pre_peeler = sorting_pre_peeler.save(folder=sorter_output_folder / "sorting_pre_peeler")
-            if params["apply_motion_correction"]:
-                motion_info["motion"].save(sorter_output_folder / "motion")
             np.save(sorter_output_folder / "noise_levels.npy", noise_levels)
             np.save(sorter_output_folder / "all_peaks.npy", all_peaks)
             np.save(sorter_output_folder / "peaks.npy", peaks)

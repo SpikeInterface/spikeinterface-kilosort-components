@@ -190,33 +190,15 @@ class KiloSortClustering:
             )
 
         labels_set = np.unique(clu)
-        # fs = recording.get_sampling_frequency()
-        # nbefore = int(ms_before * fs / 1000.0)
-        # nafter = int(ms_after * fs / 1000.0)
-        # templates_array = np.zeros((len(Wall), nbefore+nafter, Nchan), dtype=np.float32)
-        # for unit_ind, label in enumerate(labels_set):
-        #     templates_array[unit_ind] = svd_model.inverse_transform(Wall[unit_ind]).T
 
-        # unit_ids = np.arange(len(labels_set))
-        # from spikeinterface.core.template import Templates
-        # templates = Templates(
-        #     templates_array=templates_array,
-        #     sampling_frequency=fs,
-        #     nbefore=nbefore,
-        #     sparsity_mask=None,
-        #     channel_ids=recording.channel_ids,
-        #     unit_ids=unit_ids,
-        #     probe=recording.get_probe(),
-        #     is_scaled=False,
-        # ) 
-
+        # also return svd model and svd peaks to be able to reconstruct templates
         more_outs = dict(
             svd_model=svd_model,
             peaks_svd=np.swapaxes(tF.cpu(), 2, 1),
             peak_svd_sparse_mask=sparse_mask,
         )
         return labels_set, clu, more_outs
-        
+
 
 def nearest_chans(ys, yc, xs, xc, nC):
     ds = (ys - yc[:,np.newaxis])**2 + (xs - xc[:,np.newaxis])**2
