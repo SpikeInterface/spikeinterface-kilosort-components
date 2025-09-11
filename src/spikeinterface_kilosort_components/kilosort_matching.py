@@ -2,11 +2,14 @@ import numpy as np
 
 from spikeinterface.sortingcomponents.matching.base import BaseTemplateMatching, _base_matching_dtype
 
+import importlib.util
 torch_spec = importlib.util.find_spec("torch")
 if torch_spec is not None:
     torch_nn_functional_spec = importlib.util.find_spec("torch.nn")
     if torch_nn_functional_spec is not None:
         HAVE_TORCH = True
+        import torch
+        from torch.nn.functional import conv1d, max_pool1d
     else:
         HAVE_TORCH = False
 else:
