@@ -82,7 +82,7 @@ class KiloSortMatching(BaseTemplateMatching):
     def __init__(
         self,
         recording,
-        templates=None,
+        templates,
         return_output=True,
         temporal_components=None,
         spatial_components=None,
