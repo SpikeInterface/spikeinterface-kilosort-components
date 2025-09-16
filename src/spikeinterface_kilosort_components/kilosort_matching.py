@@ -83,6 +83,7 @@ class KiloSortMatching(BaseTemplateMatching):
         self,
         recording,
         templates=None,
+        return_output=True,
         temporal_components=None,
         spatial_components=None,
         Th=8,
@@ -93,7 +94,7 @@ class KiloSortMatching(BaseTemplateMatching):
     ):
 
         import scipy
-        BaseTemplateMatching.__init__(self, recording, templates, return_output=True, parents=None)
+        BaseTemplateMatching.__init__(self, recording, templates, return_output=return_output)
         self.templates_array = self.templates.get_dense_templates()
         self.spatial_components = spatial_components
         self.temporal_components = temporal_components

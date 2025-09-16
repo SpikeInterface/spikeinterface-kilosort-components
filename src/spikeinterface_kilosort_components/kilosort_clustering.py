@@ -45,16 +45,35 @@ class KiloSortClustering:
 
     """
 
+    name = "kilosort-clustering"
+
     _default_params = {
-        "n_svd": 5,
-        "ms_before": 2,
-        "ms_after": 2,
+        "peaks_svd": {"n_components": 5,
+                      "ms_before": 0.5,
+                      "ms_after": 1.5,
+                      "radius_um": 120.0,
+                      "motion": None},
+        "seed": None,
         "verbose": False,
         "engine": "torch",
         "torch_device": "cpu",
         "cluster_downsampling": 20,
         "n_nearest_channels" : 10
     }
+
+    params_doc = """
+        peaks_svd: params for peak SVD features extraction. 
+        See spikeinterface.sortingcomponents.waveforms.peak_svd.extract_peaks_svd
+                        for more details
+        seed: Random seed for reproducibility
+        verbose: If True, print information during the process
+        engine : 'torch' | 'numpy'
+        The engine to use for computations. 'torch' requires pytorch to be installed
+        torch_device : 'cpu' | 'cuda'
+            The device to use for torch computations
+        cluster_downsampling: decimation factor for clustering peaks
+        n_nearest_channels: number of channels to consider for local SVD
+    """
 
 
     @classmethod
