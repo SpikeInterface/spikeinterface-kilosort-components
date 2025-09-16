@@ -45,16 +45,33 @@ class KiloSortClustering:
 
     """
 
+    name = "kilosort-clustering"
+
     _default_params = {
-        "n_svd": 5,
-        "ms_before": 2,
-        "ms_after": 2,
+        "peaks_svd": {"n_components": 5,
+                      "ms_before": 2,
+                      "ms_after": 2},
+        "seed": None,
         "verbose": False,
         "engine": "torch",
         "torch_device": "cpu",
         "cluster_downsampling": 20,
         "n_nearest_channels" : 10
     }
+
+    params_doc = """
+        peaks_svd: params for peak SVD features extraction. 
+        See spikeinterface.sortingcomponents.waveforms.peak_svd.extract_peaks_svd
+                        for more details
+        seed: Random seed for reproducibility
+        verbose: If True, print information during the process
+        engine : 'torch' | 'numpy'
+        The engine to use for computations. 'torch' requires pytorch to be installed
+        torch_device : 'cpu' | 'cuda'
+            The device to use for torch computations
+        cluster_downsampling: decimation factor for clustering peaks
+        n_nearest_channels: number of channels to consider for local SVD
+    """
 
 
     @classmethod
@@ -64,8 +81,9 @@ class KiloSortClustering:
         if params['engine'] != 'torch':
             raise Exception('Not yet implemented!')
 
-        ms_before = params["ms_before"]
-        ms_after = params["ms_after"]
+        ms_before = params["peaks_svd"].get("ms_before", 2)
+        ms_after = params["peaks_svd"].get("ms_after", 2)
+        n_components = params["peaks_svd"].get("n_components", 5)
 
         Nchan = recording.get_num_channels()
         sparsity_mask = np.zeros((Nchan, Nchan), dtype=bool)
@@ -77,7 +95,7 @@ class KiloSortClustering:
         tF, sparse_mask, svd_model = extract_peaks_svd(
             recording, 
             peaks,
-            n_components=params["n_svd"],
+            n_components=n_components,
             ms_before=ms_before,
             ms_after=ms_after,
             motion_aware=False,
