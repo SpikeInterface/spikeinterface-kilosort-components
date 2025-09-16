@@ -49,10 +49,8 @@ class KiloSortClustering:
 
     _default_params = {
         "peaks_svd": {"n_components": 5,
-                      "ms_before": 0.5,
-                      "ms_after": 1.5,
-                      "radius_um": 120.0,
-                      "motion": None},
+                      "ms_before": 2,
+                      "ms_after": 2},
         "seed": None,
         "verbose": False,
         "engine": "torch",
@@ -83,8 +81,9 @@ class KiloSortClustering:
         if params['engine'] != 'torch':
             raise Exception('Not yet implemented!')
 
-        ms_before = params["ms_before"]
-        ms_after = params["ms_after"]
+        ms_before = params["peaks_svd"].get("ms_before", 2)
+        ms_after = params["peaks_svd"].get("ms_after", 2)
+        n_components = params["peaks_svd"].get("n_components", 5)
 
         Nchan = recording.get_num_channels()
         sparsity_mask = np.zeros((Nchan, Nchan), dtype=bool)
@@ -96,7 +95,7 @@ class KiloSortClustering:
         tF, sparse_mask, svd_model = extract_peaks_svd(
             recording, 
             peaks,
-            n_components=params["n_svd"],
+            n_components=n_components,
             ms_before=ms_before,
             ms_after=ms_after,
             motion_aware=False,
