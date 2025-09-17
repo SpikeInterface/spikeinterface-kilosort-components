@@ -98,7 +98,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         from spikeinterface.sortingcomponents.tools import get_prototype_and_waveforms_from_recording
         from spikeinterface.sortingcomponents.peak_detection import detect_peaks
         from spikeinterface.sortingcomponents.peak_selection import select_peaks
-        from spikeinterface.sortingcomponents.clustering.main import find_cluster_from_peaks
+        from spikeinterface.sortingcomponents.clustering.main import find_clusters_from_peaks
         from spikeinterface.sortingcomponents.matching import find_spikes_from_templates
         from spikeinterface.sortingcomponents.clustering.tools import get_templates_from_peaks_and_svd
         from spikeinterface.sortingcomponents.tools import remove_empty_templates
@@ -177,7 +177,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         detection_params = params["detection"].copy()
         detection_params["prototype"] = prototype
         detection_params["ms_before"] = ms_before
-        all_peaks = detect_peaks(recording, method="matched_filtering", **detection_params, **job_kwargs)
+        all_peaks = detect_peaks(recording, method="matched_filtering", method_kwargs=detection_params, job_kwargs=job_kwargs)
 
         if verbose:
             print(f"detect peaks: {len(all_peaks)} peaks found")
@@ -196,8 +196,8 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         clustering_kwargs = params["clustering"].copy()
         clustering_kwargs["ms_before"] = ms_before
         clustering_kwargs["ms_after"] = ms_after
-        unit_ids, clustering_label, more_outs = find_cluster_from_peaks(
-            recording, peaks, method="kilosort-clustering", method_kwargs=clustering_kwargs, extra_outputs=True, **job_kwargs
+        unit_ids, clustering_label, more_outs = find_clusters_from_peaks(
+            recording, peaks, method="kilosort-clustering", method_kwargs=clustering_kwargs, extra_outputs=True, job_kwargs=job_kwargs,
         )
 
         mask = clustering_label >= 0
@@ -208,7 +208,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             unit_ids=unit_ids,
         )
         if verbose:
-            print(f"find_cluster_from_peaks(): {sorting_pre_peeler.unit_ids.size} cluster found")
+            print(f"find_clusters_from_peaks(): {sorting_pre_peeler.unit_ids.size} cluster found")
 
         # create th template from the median of SVD
         templates_dense, _ = get_templates_from_peaks_and_svd(
@@ -247,12 +247,11 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
     
 
         matching_params = params["matching"].copy()
-        matching_params["templates"] = templates
         matching_params["temporal_components"] = temporal_components
         matching_params["spatial_components"] = spatial_components
 
         spikes = find_spikes_from_templates(
-            recording, method="kilosort-matching", method_kwargs=matching_params, **job_kwargs
+            recording, templates, method="kilosort-matching", method_kwargs=matching_params, job_kwargs=job_kwargs
         )
 
         final_spikes = np.zeros(spikes.size, dtype=minimum_spike_dtype)
