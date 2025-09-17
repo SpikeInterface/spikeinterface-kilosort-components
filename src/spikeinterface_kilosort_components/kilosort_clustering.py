@@ -1,6 +1,5 @@
 import numpy as np
 
-from spikeinterface.core import get_global_tmp_folder
 from spikeinterface.core.recording_tools import get_channel_distances
 
 import gc
@@ -45,28 +44,50 @@ class KiloSortClustering:
 
     """
 
+    name = "kilosort-clustering"
+
     _default_params = {
-        "n_svd": 5,
-        "ms_before": 2,
-        "ms_after": 2,
+        "peaks_svd": {"n_components": 5,
+                      "ms_before": 2,
+                      "ms_after": 2},
+        "seed": None,
         "verbose": False,
+        "svd_model": None,
         "engine": "torch",
         "torch_device": "cpu",
         "cluster_downsampling": 20,
         "n_nearest_channels" : 10
     }
 
+    params_doc = """
+        peaks_svd: params for peak SVD features extraction. 
+        See spikeinterface.sortingcomponents.waveforms.peak_svd.extract_peaks_svd
+                        for more details
+        seed: 
+            Random seed for reproducibility
+        verbose: 
+            If True, print information during the process
+        svd_model: 
+            The model used for svd transformation
+        engine : 'torch' | 'numpy'
+            The engine to use for computations. 'torch' requires pytorch to be installed
+        torch_device : 'cpu' | 'cuda'
+            The device to use for torch computations
+        cluster_downsampling: 
+            decimation factor for clustering peaks
+        n_nearest_channels: 
+            number of channels to consider for local SVD
+    """
+
 
     @classmethod
     def main_function(cls, recording, peaks, params, job_kwargs=dict()):
-        from spikeinterface.sortingcomponents.clustering.peak_svd import extract_peaks_svd
+        from spikeinterface.sortingcomponents.waveforms.peak_svd import extract_peaks_svd
         
         if params['engine'] != 'torch':
             raise Exception('Not yet implemented!')
 
-        ms_before = params["ms_before"]
-        ms_after = params["ms_after"]
-
+        n_components = params["peaks_svd"].get("n_components", 5)
         Nchan = recording.get_num_channels()
         sparsity_mask = np.zeros((Nchan, Nchan), dtype=bool)
         channel_distance = get_channel_distances(recording)
@@ -77,11 +98,8 @@ class KiloSortClustering:
         tF, sparse_mask, svd_model = extract_peaks_svd(
             recording, 
             peaks,
-            n_components=params["n_svd"],
-            ms_before=ms_before,
-            ms_after=ms_after,
-            motion_aware=False,
-            motion=None,
+            svd_model=params["svd_model"],
+            **params["peaks_svd"],
             sparsity_mask=sparsity_mask,
             **job_kwargs
         )
@@ -116,7 +134,7 @@ class KiloSortClustering:
         xcent = x_centers(xcup)
         nsp = len(peaks)
         Nchan = recording.get_num_channels()
-        n_pca = params['n_svd']
+        n_pca = n_components
         nearest_center, _, _ = get_nearest_centers(xy, xcent, ycent)
 
         clu = np.zeros(nsp, 'int32')
@@ -167,10 +185,10 @@ class KiloSortClustering:
                     nmax += Nfilt
 
                     # we need the new templates here         
-                    W = torch.zeros((Nfilt, Nchan, params['n_svd']))
+                    W = torch.zeros((Nfilt, Nchan, n_components))
                     for j in range(Nfilt):
                         w = Xd[iclust==j].mean(0)
-                        W[j, ch_min:ch_max, :] = torch.reshape(w, (-1, params['n_svd'])).cpu()
+                        W[j, ch_min:ch_max, :] = torch.reshape(w, (-1, n_components)).cpu()
                     
                     Wall = torch.cat((Wall, W), 0)
 
