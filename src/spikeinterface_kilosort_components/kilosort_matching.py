@@ -2,12 +2,17 @@ import numpy as np
 
 from spikeinterface.sortingcomponents.matching.base import BaseTemplateMatching, _base_matching_dtype
 
-try:
-    import torch
-
-    HAVE_TORCH = True
-    from torch.nn.functional import conv1d, max_pool2d, max_pool1d
-except ImportError:
+import importlib.util
+torch_spec = importlib.util.find_spec("torch")
+if torch_spec is not None:
+    torch_nn_functional_spec = importlib.util.find_spec("torch.nn")
+    if torch_nn_functional_spec is not None:
+        HAVE_TORCH = True
+        import torch
+        from torch.nn.functional import conv1d, max_pool1d
+    else:
+        HAVE_TORCH = False
+else:
     HAVE_TORCH = False
 
 
@@ -45,7 +50,7 @@ class KiloSortMatching(BaseTemplateMatching):
         wfs /= np.linalg.norm(wfs, axis=1)[:, None]
         model = KMeans(n_clusters=n_components, n_init=10).fit(wfs)
         temporal_components = model.cluster_centers_
-        temporal_components = temporal_components / np.linalg.norm(temporal_components[:, None])
+        temporal_components = temporal_components / np.linalg.norm(temporal_components, axis=1)[:, None]
         temporal_components = temporal_components.astype(np.float32)
         
         from sklearn.decomposition import TruncatedSVD
@@ -54,12 +59,31 @@ class KiloSortMatching(BaseTemplateMatching):
 
     """
 
+    name = "kilosort-matching"
+    need_noise_levels = False
+    params_doc = """
+    temporal_components : array
+        The temporal components used to describe the templates. Shape (n_components, n_times)
+    spatial_components : array
+        The spatial components used to describe the templates. Shape (n_channels, n_components)
+    Th : float
+        The threshold for detection in term of normalized correlation
+    max_iter : int
+        The maximum number of iteration of the matching pursuit algorithm
+    engine : 'torch' | 'numpy'
+        The engine to use for computations. 'torch' requires pytorch to be installed
+    torch_device : 'cpu' | 'cuda'
+        The device to use for torch computations
+    shared_memory : bool
+        If True and engine is 'torch', the pairwise template interaction matrix is stored in shared memory
+        to allow multi-processing. This is memory intensive but faster.
+    """
+
     def __init__(
         self,
         recording,
+        templates,
         return_output=True,
-        parents=None,
-        templates=None,
         temporal_components=None,
         spatial_components=None,
         Th=8,
@@ -70,8 +94,7 @@ class KiloSortMatching(BaseTemplateMatching):
     ):
 
         import scipy
-        
-        BaseTemplateMatching.__init__(self, recording, templates, return_output=True, parents=None)
+        BaseTemplateMatching.__init__(self, recording, templates, return_output=return_output)
         self.templates_array = self.templates.get_dense_templates()
         self.spatial_components = spatial_components
         self.temporal_components = temporal_components
@@ -148,8 +171,9 @@ class KiloSortMatching(BaseTemplateMatching):
             WtW = np.flip(WtW, 2)
             UtU = np.einsum("ikl, jml -> ijkm", self.U, self.U)
             self.ctc = np.einsum("ijkm, kml -> ijl", UtU, WtW)
-            self.trange = np.arange(-self.num_samples, self.num_samples + 1, device=self.torch_device)
+            self.trange = np.arange(-self.num_samples, self.num_samples + 1)
 
+        self.shm = None
         if self.shared_memory:
             from spikeinterface.core.core_tools import make_shared_array
             arr, shm = make_shared_array(self.ctc.shape, dtype=np.float32)
@@ -159,7 +183,7 @@ class KiloSortMatching(BaseTemplateMatching):
 
         self.nbefore = self.templates.nbefore
         self.nafter = self.templates.nafter
-        self.margin = self.num_samples
+        self.margin = 2*self.num_samples
         
 
         self.is_pushed = False
@@ -197,7 +221,8 @@ class KiloSortMatching(BaseTemplateMatching):
             self._push_to_torch()
 
         if self.engine == "torch":
-            X = torch.as_tensor(traces.T, device=self.torch_device)
+            # copy is needed for torch
+            X = torch.as_tensor(traces.T.copy(), device=self.torch_device)
             B = conv1d(X.unsqueeze(1), self.W.unsqueeze(1), padding=self.num_samples // 2)
             B = torch.einsum("ijk, kjl -> il", self.U, B)
 
@@ -206,8 +231,8 @@ class KiloSortMatching(BaseTemplateMatching):
 
             for t in range(self.max_iter):
                 Cf = torch.relu(B) ** 2 / self.nm.unsqueeze(-1)
-                Cf[:, : self.margin] = 0
-                Cf[:, -self.margin :] = 0
+                Cf[:, : self.num_samples] = 0
+                Cf[:, -self.num_samples :] = 0
 
                 Cfmax, imax = torch.max(Cf, 0)
                 Cmax = max_pool1d(
@@ -216,7 +241,6 @@ class KiloSortMatching(BaseTemplateMatching):
                 cnd1 = Cmax[0, 0] > self.Th**2
                 cnd2 = torch.abs(Cmax[0, 0] - Cfmax) < 1e-9
                 xs = torch.nonzero(cnd1 * cnd2)
-
                 if len(xs) == 0:
                     break
 
