@@ -45,12 +45,12 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         "waveforms": {
             "ms_before": 2.,
             "ms_after": 2.,
-            "radius_um": 80.0,
+            "radius_um": 100.0,
         },
         "detection": {"peak_sign":"neg", "detect_threshold": 6},
         "selection": {"n_peaks_per_channel": 5000, "min_n_peaks": 20000},
         "clustering": {
-            "n_svd": 5,
+            "n_svd": 6,
             "verbose": False,
             "engine": "torch",
             # "torch_device": "cpu",
@@ -62,7 +62,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             "sparsity_threshold": 1.5,
         },
         "matching": {
-            "Th" : 8,
+            "Th" : 10, # the real KS has 8 here but 10 seems better
             "max_iter" : 100,
             "engine" : "torch",
             "torch_device" : "cpu",
@@ -104,6 +104,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         from spikeinterface.sortingcomponents.tools import remove_empty_templates
         from spikeinterface.preprocessing import correct_motion
         from spikeinterface.sortingcomponents.motion import InterpolateMotionRecording
+        from spikeinterface.sortingcomponents.tools import clean_templates
 
         
 
@@ -168,6 +169,9 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             n_peaks=10000,
             ms_before=ms_before,
             ms_after=ms_after,
+            radius_um=params["waveforms"]["radius_um"] / 2,
+            exclude_sweep_ms=max(ms_before, ms_after),
+            noise_levels=noise_levels,
             **job_kwargs,
         )
         detection_params = params["detection"].copy()
@@ -218,14 +222,17 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             more_outs["peak_svd_sparse_mask"],
             operator="median",
         )
-        # spasify to remove zeros
-        sparsity = compute_sparsity(templates_dense, method="snr", noise_levels=noise_levels, threshold=0.1)
-        templates = templates_dense.to_sparse(sparsity)
-        templates = remove_empty_templates(templates)
-
+        # and clean small ones
+        templates = clean_templates(templates_dense, 
+                    sparsify_threshold=0.1,
+                    noise_levels=noise_levels, 
+                    min_snr=4.,
+                    max_jitter_ms=0.5, 
+                    remove_empty=True)
+        if verbose:
+            print("Kept %d clean clusters" % len(templates.unit_ids))
 
         ## Step : template matching
-        
         # peeler kilosort4 need temporal_components
         n_svd = params["clustering"]["n_svd"]
         from sklearn.cluster import KMeans
@@ -233,7 +240,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         wfs = waveforms / np.linalg.norm(waveforms, axis=1)[:, None]
         model = KMeans(n_clusters=n_svd, n_init=10).fit(wfs)
         temporal_components = model.cluster_centers_
-        temporal_components = temporal_components / np.linalg.norm(temporal_components[:, None])
+        temporal_components = temporal_components / np.linalg.norm(temporal_components, axis=1)[:, None]
         temporal_components = temporal_components.astype(np.float32)
         model = TruncatedSVD(n_components=n_svd).fit(wfs)
         spatial_components = model.components_.astype(np.float32)

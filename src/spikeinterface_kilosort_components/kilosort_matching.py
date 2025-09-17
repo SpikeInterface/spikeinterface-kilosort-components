@@ -183,8 +183,8 @@ class KiloSortMatching(BaseTemplateMatching):
 
         self.nbefore = self.templates.nbefore
         self.nafter = self.templates.nafter
-        self.margin = 2*self.num_samples
-        
+
+        self.margin = self.num_samples * 2
 
         self.is_pushed = False
 
