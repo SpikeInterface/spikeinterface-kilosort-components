@@ -45,7 +45,7 @@ class KiloSortMatching(BaseTemplateMatching):
         wfs /= np.linalg.norm(wfs, axis=1)[:, None]
         model = KMeans(n_clusters=n_components, n_init=10).fit(wfs)
         temporal_components = model.cluster_centers_
-        temporal_components = temporal_components / np.linalg.norm(temporal_components[:, None])
+        temporal_components = temporal_components / np.linalg.norm(temporal_components, axis=1)[:, None]
         temporal_components = temporal_components.astype(np.float32)
         
         from sklearn.decomposition import TruncatedSVD
@@ -160,7 +160,7 @@ class KiloSortMatching(BaseTemplateMatching):
 
         self.nbefore = self.templates.nbefore
         self.nafter = self.templates.nafter
-        self.margin = self.num_samples
+        self.margin = self.num_samples * 2
         
 
         self.is_pushed = False
@@ -208,8 +208,8 @@ class KiloSortMatching(BaseTemplateMatching):
 
             for t in range(self.max_iter):
                 Cf = torch.relu(B) ** 2 / self.nm.unsqueeze(-1)
-                Cf[:, : self.margin] = 0
-                Cf[:, -self.margin :] = 0
+                Cf[:, : self.num_samples] = 0
+                Cf[:, -self.num_samples :] = 0
 
                 Cfmax, imax = torch.max(Cf, 0)
                 Cmax = max_pool1d(

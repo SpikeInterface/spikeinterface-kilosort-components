@@ -194,7 +194,7 @@ class KiloSortClustering:
         # also return svd model and svd peaks to be able to reconstruct templates
         more_outs = dict(
             svd_model=svd_model,
-            peaks_svd=np.swapaxes(tF.cpu(), 2, 1),
+            peaks_svd=np.swapaxes(tF.cpu().numpy(), 2, 1),
             peak_svd_sparse_mask=sparse_mask,
         )
         return labels_set, clu, more_outs
