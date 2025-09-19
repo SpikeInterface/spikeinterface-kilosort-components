@@ -105,7 +105,7 @@ class KiloSortClustering:
             svd_model=params["svd_model"],
             **peaks_svd,
             sparsity_mask=sparsity_mask,
-            **job_kwargs
+            job_kwargs=job_kwargs,
         )
         
 
@@ -124,7 +124,7 @@ class KiloSortClustering:
         # locations = localize_peaks(recording, peaks, method='grid_convolution', 
         #             ms_before=ms_before, 
         #             ms_after=ms_after, 
-        #             prototype=prototype, **job_kwargs)
+        #             prototype=prototype, job_kwargs=job_kwargs)
 
         iclust_template = peaks['channel_index']
         iC, _ = nearest_chans(ycup, ycup, xcup, xcup, params["n_nearest_channels"])

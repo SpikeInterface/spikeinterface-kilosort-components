@@ -172,7 +172,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             radius_um=params["waveforms"]["radius_um"] / 2,
             exclude_sweep_ms=max(ms_before, ms_after),
             noise_levels=noise_levels,
-            **job_kwargs,
+            job_kwargs=job_kwargs,
         )
         detection_params = params["detection"].copy()
         detection_params["prototype"] = prototype
@@ -281,7 +281,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
                 max_distance_um=50,
                 template_diff_thresh=np.arange(0.05, 0.4, 0.05),
                 debug_folder=None,
-                **job_kwargs,
+                job_kwargs=job_kwargs,
             )
             sorting = NumpySorting.from_sorting(analyzer_final.sorting)
 
