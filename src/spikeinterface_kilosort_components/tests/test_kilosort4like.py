@@ -12,28 +12,6 @@ from spikeinterface_kilosort_components.kilosort_like_sorter import Kilosort4Lik
 class Kilosort4LikeSorterCommonTestSuite(SorterCommonTestSuite, unittest.TestCase):
     SorterClass = Kilosort4LikeSorter
 
-    @unittest.skip("performance reason")
-    def test_with_numpy_gather(self):
-        recording = self.recording
-        sorter_name = self.SorterClass.sorter_name
-        output_folder = self.cache_folder / sorter_name
-        sorter_params = self.SorterClass.default_params()
-
-        sorter_params["matching"]["gather_mode"] = "npy"
-
-        sorting = run_sorter(
-            sorter_name,
-            recording,
-            folder=output_folder,
-            remove_existing_folder=True,
-            delete_output_folder=False,
-            verbose=False,
-            raise_error=True,
-            **sorter_params,
-        )
-        assert (output_folder / "sorter_output" / "matching").is_dir()
-        assert (output_folder / "sorter_output" / "matching" / "spikes.npy").is_file()
-
 
 if __name__ == "__main__":
     test = Kilosort4LikeSorterCommonTestSuite()
