@@ -19,8 +19,6 @@ except ImportError:
 
 from tqdm.auto import tqdm 
 
-
-
 from scipy.sparse import csr_matrix
 
 import numpy as np
@@ -54,7 +52,7 @@ class KiloSortClustering:
         "verbose": False,
         "svd_model": None,
         "engine": "torch",
-        "torch_device": "cpu",
+        "torch_device": "cuda",
         "cluster_downsampling": 20,
         "n_nearest_channels" : 10
     }
@@ -89,17 +87,23 @@ class KiloSortClustering:
 
         n_components = params["peaks_svd"].get("n_components", 5)
         Nchan = recording.get_num_channels()
+        seed = params["seed"]
         sparsity_mask = np.zeros((Nchan, Nchan), dtype=bool)
         channel_distance = get_channel_distances(recording)
         closest_channels = np.argsort(channel_distance, axis=1)
         for count, valid in enumerate(closest_channels):
             sparsity_mask[count, valid[:params["n_nearest_channels"]]] = True
+        peaks_svd = params["peaks_svd"].copy()
+        if seed is not None:
+            peaks_svd.update(seed=seed)
 
+        seed = seed if seed is not None else 1
+        
         tF, sparse_mask, svd_model = extract_peaks_svd(
             recording, 
             peaks,
             svd_model=params["svd_model"],
-            **params["peaks_svd"],
+            **peaks_svd,
             sparsity_mask=sparsity_mask,
             **job_kwargs
         )
@@ -166,7 +170,7 @@ class KiloSortClustering:
                         st0 = None
                         # find new clusters
                         iclust, iclust0, M, _ = cluster(
-                            Xd, nskip=nskip, lam=1, seed=5, device=params["torch_device"]
+                            Xd, nskip=nskip, lam=1, seed=seed, device=params["torch_device"]
                             )
                         
                         gc.collect()
@@ -789,7 +793,7 @@ def split(Xd, xtree, tstat, iclust, my_clus, verbose = True, meta = None):
         ix2 = np.isin(iclust, my_clus[xtree[kk, 1]])
 
         criterion = 0
-        score = np.NaN
+        score = np.nan
         if criterion==0:
             # first mutation is global modularity
             if tstat[kk,0] < 0.2:
