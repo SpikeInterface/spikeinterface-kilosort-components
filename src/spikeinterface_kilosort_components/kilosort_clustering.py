@@ -72,7 +72,8 @@ class KiloSortClustering:
         "n_nearest_channels" : 10,
         'max_cluster_subset': 25000,
         'cluster_neighbors': 10,
-        'dminx': 32
+        'dminx': 32,
+        'min_cluster_size': 20,
     }
 
     params_doc = """
@@ -177,10 +178,12 @@ class KiloSortClustering:
                         # No templates are nearest to this center, skip it.
                         continue
                     ix = (nearest_center == ii)
-                    Xd, ch_min, ch_max, igood  = get_data_cpu(
+
+                    Xd, igood, ichan = get_data_cpu(
                         xy, iC, iclust_template.copy(), tF, ycent[kk], xcent[jj],
-                        dmin=dmin, dminx=dminx, ix=ix
-                        )
+                        dmin=dmin, dminx=dminx, ix=ix,
+                    )
+
                     if Xd is None:
                         nearby_chans_empty += 1
                         continue
@@ -214,7 +217,7 @@ class KiloSortClustering:
                     W = torch.zeros((Nfilt, Nchan, n_components))
                     for j in range(Nfilt):
                         w = Xd[iclust==j].mean(0)
-                        W[j, ch_min:ch_max, :] = torch.reshape(w, (-1, n_components)).cpu()
+                        W[j, ichan, :] = torch.reshape(w, (-1, n_components)).cpu()
                     
                     Wall = torch.cat((Wall, W), 0)
 
@@ -248,7 +251,11 @@ class KiloSortClustering:
             peak_svd_sparse_mask=sparse_mask,
         )
         
-        labels_set = np.unique(clu)
+        labels_set, counts = np.unique(clu, return_counts=True)
+        idx = counts <= params['min_cluster_size']
+        for lab in labels_set[idx]:
+            clu[clu==lab] = -1  # noise label
+        print(f"Removing {idx.sum()} noisy templates...")
 
         return labels_set, clu, more_outs_merged
 
@@ -313,10 +320,10 @@ def neigh_mat(Xd, nskip=1, n_neigh=10, max_sub=25000):
     return kn, M
 
 def assign_iclust(rows_neigh, isub, kn, tones2, nclust, lam, m, ki, kj, device='cuda'):
-    NN = kn.shape[0]
+    n_spikes = kn.shape[0]
 
     ij = torch.vstack((rows_neigh.flatten(), isub[kn].flatten()))
-    xN = coo(ij, tones2.flatten(), (NN, nclust))
+    xN = coo(ij, tones2.flatten(), (n_spikes, nclust))
     xN = xN.to_dense()
 
     if lam > 0:
@@ -364,7 +371,7 @@ def Mstats(M, device='cuda'):
 
 
 def cluster(Xd, iclust=None, kn=None, nskip=1, n_neigh=10, max_sub=25000,
-            nclust=200, seed=1, niter=200, lam=0, device=torch.device('cuda'),
+            nclust=200, seed=1, niter=200, lam=0, device='cuda',
             verbose=False):    
 
     if kn is None:
@@ -617,6 +624,40 @@ def get_data_cpu(xy, iC, PID, tF, ycenter, xcenter, dmin=20, dminx=32,
                  ix=None, merge_dim=True):
     PID =  torch.from_numpy(PID).long()
     
+    # y0 = ycenter # xy[1].mean() - ycenter
+    # x0 = xcenter #xy[0].mean() - xcenter
+
+    # if ix is None:
+    #     ix = torch.logical_and(
+    #         torch.abs(xy[1] - y0) < dmin,
+    #         torch.abs(xy[0] - x0) < dminx
+    #         )
+    # igood = ix[PID].nonzero()[:,0]
+
+    # if len(igood)==0:
+    #     return None, None,  None, None
+
+    # pid = PID[igood]
+    # data = tF[igood]
+    # nspikes, _, nfeatures = data.shape
+
+    # ichan = torch.unique(iC[:, ix])
+    # ch_min = torch.min(ichan)
+    # ch_max = torch.max(ichan)+1
+    # nchan = ch_max - ch_min
+
+    # dd = torch.zeros((nspikes, nchan, nfeatures), device=data.device)
+
+    # for j in ix.nonzero()[:, 0]:
+    #     ij = torch.nonzero(pid==j)[:, 0]
+    #     dd[ij.unsqueeze(-1), iC[:,j]-ch_min] = data[ij]
+
+    # if merge_dim:
+    #     Xd = torch.reshape(dd, (nspikes, -1))
+    # else:
+    #     # Keep channels and features separate
+    #     Xd = dd
+
     y0 = ycenter # xy[1].mean() - ycenter
     x0 = xcenter #xy[0].mean() - xcenter
 
@@ -627,23 +668,19 @@ def get_data_cpu(xy, iC, PID, tF, ycenter, xcenter, dmin=20, dminx=32,
             )
     igood = ix[PID].nonzero()[:,0]
 
-    if len(igood)==0:
-        return None, None,  None, None
+    if len(igood) == 0:
+        return None, None, None
 
     pid = PID[igood]
     data = tF[igood]
-    nspikes, _, nfeatures = data.shape
-
-    ichan = torch.unique(iC[:, ix])
-    ch_min = torch.min(ichan)
-    ch_max = torch.max(ichan)+1
-    nchan = ch_max - ch_min
+    nspikes, nchanraw, nfeatures = data.shape
+    ichan, imap = torch.unique(iC[:, ix], return_inverse=True)
+    nchan = ichan.nelement()
 
     dd = torch.zeros((nspikes, nchan, nfeatures), device=data.device)
-
-    for j in ix.nonzero()[:, 0]:
+    for k,j in enumerate(ix.nonzero()[:,0]):
         ij = torch.nonzero(pid==j)[:, 0]
-        dd[ij.unsqueeze(-1), iC[:,j]-ch_min] = data[ij]
+        dd[ij.unsqueeze(-1), imap[:,k]] = data[ij]
 
     if merge_dim:
         Xd = torch.reshape(dd, (nspikes, -1))
@@ -651,7 +688,7 @@ def get_data_cpu(xy, iC, PID, tF, ycenter, xcenter, dmin=20, dminx=32,
         # Keep channels and features separate
         Xd = dd
 
-    return Xd.cpu(), ch_min, ch_max, igood
+    return Xd.cpu(), igood, ichan
 
 
 
@@ -911,11 +948,13 @@ def new_clusters(iclust, my_clus, xtree, tstat):
 
 ####################### Merging functions ########################
 
-def merging_function(more_outs, clu, r_thresh=0.5, check_dt=False,
-                     device=torch.device('cuda')):
+
+def merging_function(more_outs, clu, r_thresh=0.9, check_dt=False,
+                     device='cuda'):
+
     clu2 = clu.copy()
     clu_unq, ns = np.unique(clu2, return_counts = True)
-
+    print(len(clu_unq), "clusters before merging")
     Ww = more_outs['Wall'].to(device)
     tF = more_outs['peaks_svd']
 
@@ -924,7 +963,7 @@ def merging_function(more_outs, clu, r_thresh=0.5, check_dt=False,
     is_merged = np.zeros(NN, 'bool')
     nt = more_outs['svd_model'].components_.shape[1]
     W = torch.as_tensor(more_outs['svd_model'].components_.astype(np.float32), device=device)
-    WtW = conv1d(W.reshape(-1, 1,nt), W.reshape(-1, 1 ,nt), padding = nt) 
+    WtW = conv1d(W.reshape(-1, 1, nt), W.reshape(-1, 1 ,nt), padding = nt) 
     WtW = torch.flip(WtW, [2,])
     
     t = 0
@@ -987,7 +1026,9 @@ def merging_function(more_outs, clu, r_thresh=0.5, check_dt=False,
     if imap.size > 0:
         # Otherwise, everything has been merged into a single cluster
         clu2 = imap[clu2]
-
+    clu_unq, ns = np.unique(clu2, return_counts = True)
+    print(len(clu_unq), "clusters after merging")
+    print(ns)
     Ww = Ww[~is_merged]
 
     return clu2, tF
