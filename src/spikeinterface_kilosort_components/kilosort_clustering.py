@@ -11,11 +11,26 @@ from scipy.sparse import csr_matrix
 from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks
 from scipy.cluster.vq import kmeans
+import importlib
 
-try:
+faiss_spec = importlib.util.find_spec("faiss")
+if faiss_spec is not None:
     import faiss
-except ImportError:
+else:
     print('KiloSortClustering requires faiss installed')
+
+import importlib.util
+torch_spec = importlib.util.find_spec("torch")
+if torch_spec is not None:
+    torch_nn_functional_spec = importlib.util.find_spec("torch.nn")
+    if torch_nn_functional_spec is not None:
+        HAVE_TORCH = True
+        import torch
+        from torch.nn.functional import conv1d, max_pool1d
+    else:
+        HAVE_TORCH = False
+else:
+    HAVE_TORCH = False
 
 from tqdm.auto import tqdm 
 
@@ -45,7 +60,7 @@ class KiloSortClustering:
     name = "kilosort-clustering"
 
     _default_params = {
-        "peaks_svd": {"n_components": 5,
+        "peaks_svd": {"n_components": 6,
                       "ms_before": 2,
                       "ms_after": 2},
         "seed": None,
@@ -53,8 +68,11 @@ class KiloSortClustering:
         "svd_model": None,
         "engine": "torch",
         "torch_device": "cuda",
-        "cluster_downsampling": 20,
-        "n_nearest_channels" : 10
+        "cluster_downsampling": 1,
+        "n_nearest_channels" : 10,
+        'max_cluster_subset': 25000,
+        'cluster_neighbors': 10,
+        'dminx': 32
     }
 
     params_doc = """
@@ -131,8 +149,10 @@ class KiloSortClustering:
         iC = torch.as_tensor(iC, device=params["torch_device"])
 
         dmin  = np.median(np.diff(np.unique(ycup)))
-        dminx = 32
+        dminx = params['dminx']
         nskip = params['cluster_downsampling']
+        n_neigh = params['cluster_neighbors']
+        max_sub = params['max_cluster_subset']
         ycent = y_centers(ycup, dmin)
         
         xcent = x_centers(xcup)
@@ -164,13 +184,15 @@ class KiloSortClustering:
                     if Xd is None:
                         nearby_chans_empty += 1
                         continue
-                    elif Xd.shape[0] < 1000:
+                    
+                    if Xd.shape[0] < 1000:
                         iclust = torch.zeros((Xd.shape[0],))
                     else:
                         st0 = None
                         # find new clusters
                         iclust, iclust0, M, _ = cluster(
-                            Xd, nskip=nskip, lam=1, seed=seed, device=params["torch_device"]
+                            Xd, nskip=nskip, lam=1, seed=seed, 
+                            n_neigh=n_neigh, max_sub=max_sub, device=params["torch_device"]
                             )
                         
                         gc.collect()
@@ -209,17 +231,30 @@ class KiloSortClustering:
             # Wall is empty, unspecified reason
             raise ValueError(
                 'Wall is empty after `clustering_qr.run`, cannot continue clustering.'
-            )
+            )  
 
-        labels_set = np.unique(clu)
-
-        # also return svd model and svd peaks to be able to reconstruct templates
         more_outs = dict(
+            svd_model=svd_model,
+            peaks_svd=tF,
+            Wall=Wall,
+        )
+
+        print("Merging templates...")
+        clu, tF = merging_function(more_outs, clu)
+
+        more_outs_merged = dict(
             svd_model=svd_model,
             peaks_svd=np.swapaxes(tF.cpu().numpy(), 2, 1),
             peak_svd_sparse_mask=sparse_mask,
         )
-        return labels_set, clu, more_outs
+        
+        labels_set = np.unique(clu)
+
+        return labels_set, clu, more_outs_merged
+
+
+
+
 
 
 def nearest_chans(ys, yc, xs, xc, nC):
@@ -229,15 +264,24 @@ def nearest_chans(ys, yc, xs, xc, nC):
     return iC, ds
 
 
-def neigh_mat(Xd, nskip=10, n_neigh=30):
+def neigh_mat(Xd, nskip=1, n_neigh=10, max_sub=25000):
     # Xd is spikes by PCA features in a local neighborhood
     # finding n_neigh neighbors of each spike to a subset of every nskip spike
 
-    # subsampling the feature matrix 
-    Xsub = Xd[::nskip]
-
     # n_samples is the number of spikes, dim is number of features
     n_samples, dim = Xd.shape
+
+    # Downsample feature matrix by selecting every `nskip`-th spike
+    Xsub = Xd[::nskip]
+    n1 = Xsub.shape[0]
+    # If the downsampled matrix is still larger than max_sub,
+    # downsample it further by selecting `max_sub` evenly distributed spikes.
+    if (max_sub is not None) and (n1 > max_sub):
+        n2 = n1 - max_sub
+        idx, rev_idx = subsample_idx(n1, n2)
+        Xsub = Xsub[idx]
+    else:
+        rev_idx = None
 
     # n_nodes are the # subsampled spikes
     n_nodes = Xsub.shape[0]
@@ -247,20 +291,24 @@ def neigh_mat(Xd, nskip=10, n_neigh=30):
     Xsub = np.ascontiguousarray(Xsub)
 
     # exact neighbor search ("brute force")
-    # results is dn and kn, kn is n_samples by n_neigh, contains integer indices into Xsub
+    # results is dn and kn
+    # kn is n_spikes by n_neigh, contains integer indices into Xsub
     index = faiss.IndexFlatL2(dim)   # build the index
     index.add(Xsub)    # add vectors to the index
     _, kn = index.search(Xd, n_neigh)     # actual search
 
     # create sparse matrix version of kn with ones where the neighbors are
-    # M is n_samples by n_nodes
+    # M is n_samples by n_nodes, adjacency matrix
     dexp = np.ones(kn.shape, np.float32)    
     rows = np.tile(np.arange(n_samples)[:, np.newaxis], (1, n_neigh)).flatten()
-    M   = csr_matrix((dexp.flatten(), (rows, kn.flatten())),
-                   (kn.shape[0], n_nodes))
+    M   = csr_matrix((dexp.flatten(), (rows, kn.flatten())),  # (data, (row,col))
+                     (kn.shape[0], n_nodes))                  # (shape)
 
-    # self connections are set to 0!
-    M[np.arange(0,n_samples,nskip), np.arange(n_nodes)] = 0
+    # self connections are set to 0
+    skip_idx = np.arange(0, n_samples, nskip)
+    if rev_idx is not None:
+        skip_idx = skip_idx[rev_idx]
+    M[skip_idx, np.arange(n_nodes)] = 0
 
     return kn, M
 
@@ -315,24 +363,30 @@ def Mstats(M, device='cuda'):
     return m, ki, kj
 
 
-def cluster(Xd, iclust = None, kn = None, nskip = 20, n_neigh = 10, nclust = 200, 
-            seed = 1, niter = 200, lam = 0, device='cuda'):  
+def cluster(Xd, iclust=None, kn=None, nskip=1, n_neigh=10, max_sub=25000,
+            nclust=200, seed=1, niter=200, lam=0, device=torch.device('cuda'),
+            verbose=False):    
 
     if kn is None:
-        kn, M = neigh_mat(Xd, nskip=nskip, n_neigh=n_neigh)
+        # kn: n_spikes by n_neigh with integer indices into the spike subset
+        #     used for neighbor-finding determined by nskip.
+        # M:  n_spikes by nsub, adjacency matrix representation of kn.
+        kn, M = neigh_mat(Xd, nskip=nskip, n_neigh=n_neigh, max_sub=max_sub)
     m, ki, kj = Mstats(M, device=device)
 
     Xg = Xd.to(device)
     kn = torch.from_numpy(kn).to(device)
-    n_neigh = kn.shape[1]
-    NN, nfeat = Xg.shape
-    nsub = (NN-1)//nskip + 1
-    rows_neigh = torch.arange(NN, device=device).unsqueeze(-1).tile((1,n_neigh))
-    tones2 = torch.ones((NN, n_neigh), device=device)
+    n_spikes, n_neigh = kn.shape
+    nsub = M.shape[1]  # number of spikes in neighbor-finding subset
+
+    # rows_neigh, tones2 are just used to build properly formatted indices for
+    # use by assign_isub and assign_iclust
+    rows_neigh = torch.arange(n_spikes, device=device).unsqueeze(-1).tile((1,n_neigh))
+    tones2 = torch.ones((n_spikes, n_neigh), device=device)
 
     if iclust is None:
         iclust_init =  kmeans_plusplus(Xg, niter=nclust, seed=seed, 
-                                       device=device)
+                                       device=device, verbose=verbose)
         iclust = iclust_init.clone()
     else:
         iclust_init = iclust.clone()
@@ -344,7 +398,7 @@ def cluster(Xd, iclust = None, kn = None, nskip = 20, n_neigh = 10, nclust = 200
         # given mu and isub, reassign iclust
         iclust = assign_iclust(rows_neigh, isub, kn, tones2, nclust, lam, m,
                                ki, kj, device=device)
-
+    
     _, iclust = torch.unique(iclust, return_inverse=True)    
     nclust = iclust.max() + 1
     isub = assign_isub(iclust, kn, tones2, nclust , nsub, lam, m,ki,kj, device=device)
@@ -390,7 +444,7 @@ def subsample_idx(n1, n2):
 
     return idx, rev_idx
 
-def kmeans_plusplus(Xg, niter = 200, seed = 1, device='cuda'):
+def kmeans_plusplus(Xg, niter = 200, seed = 1, device='cuda', verbose=False):
     # Xg is number of spikes by number of features.
     # We are finding cluster centroids and assigning each spike to a centroid.
     vtot = torch.norm(Xg, 2, dim=1)**2
@@ -718,7 +772,6 @@ def maketree(M, iclust, iclust0):
 ####################### Functions taken from swarmsplitter ######################
 
 import numpy as np
-import math
 
 def count_elements(kk, iclust, my_clus, xtree):
     n1 = np.isin(iclust, my_clus[xtree[kk, 0]]).sum()
@@ -854,3 +907,107 @@ def new_clusters(iclust, my_clus, xtree, tstat):
 
 
     return iclust1
+
+
+####################### Merging functions ########################
+
+def merging_function(more_outs, clu, r_thresh=0.5, check_dt=False,
+                     device=torch.device('cuda')):
+    clu2 = clu.copy()
+    clu_unq, ns = np.unique(clu2, return_counts = True)
+
+    Ww = more_outs['Wall'].to(device)
+    tF = more_outs['peaks_svd']
+
+    NN = len(Ww)
+    isort = np.argsort(ns)[::-1]
+    is_merged = np.zeros(NN, 'bool')
+    nt = more_outs['svd_model'].components_.shape[1]
+    W = torch.as_tensor(more_outs['svd_model'].components_.astype(np.float32), device=device)
+    WtW = conv1d(W.reshape(-1, 1,nt), W.reshape(-1, 1 ,nt), padding = nt) 
+    WtW = torch.flip(WtW, [2,])
+    
+    t = 0
+    nmerge = 0
+    while t<NN:
+
+        #if t%100==0:
+            #print(t, nmerge)
+
+        kk = clu_unq[isort[t]]
+
+        if is_merged[kk]:            
+            t += 1
+            continue
+
+        mu = (Ww**2).sum((1,2), keepdims=True)**.5
+        Wnorm = Ww / (1e-6 + mu)
+
+        UtU = torch.einsum('lk, jlm -> jkm',  Wnorm[kk], Wnorm)
+        ctc = torch.einsum('jkm, kml -> jl', UtU, WtW)
+
+        cmax, imax = ctc.max(1)
+        cmax[kk] = 0
+
+        jsort = np.argsort(cmax.cpu().numpy())[::-1]
+        
+        is_ccg  = 0
+        
+        for j in range(NN):
+            jj = jsort[j]
+            if cmax[jj] < r_thresh:
+                break
+            
+            dmu = 2 * (mu[kk] - mu[jj]) / (mu[kk] + mu[jj])
+            is_ccg = dmu.abs() < 0.2
+
+            if is_ccg:
+                is_merged[jj] = 1
+                dt = (imax[kk] -imax[jj]).item()
+                if dt != 0 and check_dt:
+                    # Get spike indices for cluster jj
+                    idx = (clu2 == jj)
+                    # Update tF and Wall with shifted features
+                    tF, _ = roll_features(W, tF, Ww, idx, jj, dt)
+                
+                Ww[kk] = ns[kk]/(ns[kk]+ns[jj]) * Ww[kk] + ns[jj]/(ns[kk]+ns[jj]) * Ww[jj]            
+                Ww[jj] = 0
+                ns[kk] += ns[jj]
+                ns[jj] = 0
+                clu2[clu2==jj] = kk            
+
+                break
+
+        if is_ccg==0:            
+            t +=1    
+        else:                
+            nmerge+=1
+    
+    imap = np.cumsum((~is_merged).astype('int32')) - 1
+    if imap.size > 0:
+        # Otherwise, everything has been merged into a single cluster
+        clu2 = imap[clu2]
+
+    Ww = Ww[~is_merged]
+
+    return clu2, tF
+
+def roll_features(wPCA, tF, Wall, spike_idx, clust_idx, dt):
+    W = wPCA
+    # Project from PC space back to sample time, shift by dt
+    feats = torch.roll(tF[spike_idx] @ W, shifts=dt, dims=2)
+    temps = torch.roll(Wall[clust_idx:clust_idx+1] @ wPCA, shifts=dt, dims=2)
+
+    # For values that "rolled over the edge," set equal to next closest bin
+    if dt > 0:
+        feats[:,:,:dt] = feats[:,:,dt].unsqueeze(-1)
+        temps[:,:,:dt] = temps[:,:,dt].unsqueeze(-1)
+    elif dt < 0:
+        feats[:,:,dt:] = feats[:,:,dt-1].unsqueeze(-1)
+        temps[:,:,dt:] = temps[:,:,dt-1].unsqueeze(-1)
+
+    # Project back to PC space and update tF
+    tF[spike_idx] = feats @ W.T
+    Wall[clust_idx] = temps @ wPCA.T
+
+    return tF, Wall

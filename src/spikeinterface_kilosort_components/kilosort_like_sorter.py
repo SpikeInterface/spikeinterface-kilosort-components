@@ -5,9 +5,6 @@ import importlib
 from spikeinterface.core import (
     get_noise_levels,
     NumpySorting,
-    estimate_templates_with_accumulator,
-    Templates,
-    compute_sparsity,
 )
 
 from spikeinterface.core.job_tools import fix_job_kwargs
@@ -42,14 +39,14 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         "apply_motion_correction": False,
         "apply_preprocessing": True,
         "motion_correction": {"preset": "kilosort_like"},
-        "filtering": {"freq_min": 150.0, "freq_max": 7000, "ftype": "bessel", "filter_order": 2},
+        "filtering": {"freq_min": 150.0, "freq_max": 7000, "ftype": "bessel", "filter_order": 2, "margin_ms": 100},
         "waveforms": {
             "ms_before": 2.,
             "ms_after": 2.,
             "radius_um": 100.0,
         },
         "detection": {"peak_sign":"neg", "detect_threshold": 5},
-        "selection": {"n_peaks_per_channel": 5000, "min_n_peaks": 100000},
+        "selection": {"n_peaks_per_channel": 5000, "min_n_peaks": 100000, "select_per_channel": False},
         "clustering": {
             "peaks_svd" : dict(n_components=6),
             "verbose": False,
@@ -58,7 +55,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             "cluster_downsampling": 20,
             "n_nearest_channels" : 10
         },
-        "cleaning" : {"min_snr" : 3, "max_jitter_ms" : 0.1},
+        "cleaning" : {"min_snr" : 3, "max_jitter_ms" : 0.1, "sparsify_threshold" : None},
         "matching": {
             "Th" : 10, # the real KS has 8 here but 10 seems better
             "max_iter" : 100,
@@ -117,7 +114,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         # preprocessing
         if params["apply_preprocessing"]:
             recording_f = recording_raw
-            recording_f = bandpass_filter(recording_f, freq_min=150.0, freq_max=7000.0, dtype="float32")
+            recording_f = bandpass_filter(recording_f, **params["filtering"], dtype="float32")
             recording_f = common_reference(recording_f)
         else:
             recording_f = recording_raw
@@ -208,7 +205,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             print(f"find_clusters_from_peaks(): {sorting_pre_peeler.unit_ids.size} cluster found")
 
         # create th template from the median of SVD
-        templates_dense, _ = get_templates_from_peaks_and_svd(
+        templates_dense, new_sparse_mask = get_templates_from_peaks_and_svd(
             recording,
             peaks,
             clustering_label,
@@ -219,12 +216,15 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             more_outs["peak_svd_sparse_mask"],
             operator="median",
         )
+
+        templates = templates_dense.to_sparse(new_sparse_mask)
+
         # and clean small ones
         cleaning_kwargs = params.get("cleaning", {}).copy()
         cleaning_kwargs["noise_levels"] = noise_levels
         cleaning_kwargs["remove_empty"] = True
         templates = clean_templates(
-            templates_dense,
+            templates,
             **cleaning_kwargs
         )
         
@@ -277,7 +277,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
                 sparsity_overlap=0.5,
                 censor_ms=3.0,
                 max_distance_um=50,
-                template_diff_thresh=np.arange(0.05, 0.4, 0.05),
+                template_diff_thresh=np.arange(0.05, 0.5, 0.05),
                 debug_folder=None,
                 job_kwargs=job_kwargs,
             )
