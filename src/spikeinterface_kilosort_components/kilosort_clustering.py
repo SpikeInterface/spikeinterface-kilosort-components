@@ -61,8 +61,8 @@ class KiloSortClustering:
 
     _default_params = {
         "peaks_svd": {"n_components": 6,
-                      "ms_before": 2,
-                      "ms_after": 2},
+                      "ms_before": 1,
+                      "ms_after": 1},
         "seed": None,
         "verbose": False,
         "svd_model": None,

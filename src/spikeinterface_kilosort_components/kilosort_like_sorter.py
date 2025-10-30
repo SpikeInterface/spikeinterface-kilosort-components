@@ -39,10 +39,10 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         "apply_motion_correction": False,
         "apply_preprocessing": True,
         "motion_correction": {"preset": "kilosort_like"},
-        "filtering": {"freq_min": 150.0, "freq_max": 7000, "ftype": "bessel", "filter_order": 2, "margin_ms": 100},
+        "filtering": {"freq_min": 150.0, "freq_max": 7000, "ftype": "bessel", "filter_order": 2, "margin_ms": 20},
         "waveforms": {
-            "ms_before": 2.,
-            "ms_after": 2.,
+            "ms_before": 1.,
+            "ms_after": 1.,
             "radius_um": 100.0,
         },
         "detection": {"peak_sign":"neg", "detect_threshold": 5},
@@ -61,7 +61,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         },
         "cleaning" : {"min_snr" : 3, "max_jitter_ms" : 0.1, "sparsify_threshold" : None},
         "matching": {
-            "Th" : 10, # the real KS has 8 here but 10 seems better
+            "Th" : 8, # the real KS has 8 here but 10 seems better
             "max_iter" : 100,
             "engine" : "torch",
             "torch_device" : "cpu",
