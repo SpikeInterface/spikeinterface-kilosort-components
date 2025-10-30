@@ -70,10 +70,10 @@ class KiloSortClustering:
         "torch_device": "cuda",
         "cluster_downsampling": 1,
         "n_nearest_channels" : 10,
-        'max_cluster_subset': 25000,
-        'cluster_neighbors': 10,
-        'dminx': 32,
-        'min_cluster_size': 20,
+        "max_cluster_subset": 25000,
+        "cluster_neighbors": 10,
+        "dminx": 32,
+        "min_cluster_size": 20,
     }
 
     params_doc = """
@@ -1028,7 +1028,7 @@ def merging_function(more_outs, clu, r_thresh=0.9, check_dt=False,
         clu2 = imap[clu2]
     clu_unq, ns = np.unique(clu2, return_counts = True)
     print(len(clu_unq), "clusters after merging")
-    print(ns)
+    #print(ns)
     Ww = Ww[~is_merged]
 
     return clu2, tF

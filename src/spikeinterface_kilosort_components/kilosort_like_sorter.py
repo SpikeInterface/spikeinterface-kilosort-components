@@ -52,8 +52,12 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             "verbose": False,
             "engine": "torch",
             "torch_device": "cuda",
-            "cluster_downsampling": 20,
-            "n_nearest_channels" : 10
+            "cluster_downsampling": 1,
+            "n_nearest_channels" : 10,
+            "max_cluster_subset": 25000,
+            "cluster_neighbors": 10,
+            "dminx": 32,
+            "min_cluster_size": 20,
         },
         "cleaning" : {"min_snr" : 3, "max_jitter_ms" : 0.1, "sparsify_threshold" : None},
         "matching": {
