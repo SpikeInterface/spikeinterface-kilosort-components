@@ -104,7 +104,7 @@ class KiloSortClustering:
         if params['engine'] != 'torch':
             raise Exception('Not yet implemented!')
 
-        n_components = params["peaks_svd"].get("n_components", 5)
+        n_components = params["peaks_svd"].get("n_components", 6)
         Nchan = recording.get_num_channels()
         seed = params["seed"]
         sparsity_mask = np.zeros((Nchan, Nchan), dtype=bool)
@@ -138,6 +138,10 @@ class KiloSortClustering:
         ## not realigned wrt to the upsampled grid created by KS. This could be done using the grid convolution
         ## algorithm here, but this would need some adaptation. This template_index are used to initialize the 
         ## clustering algorithm.
+        ## Also, note that KS 4 uses the clustering twice. On the peaks first, and then after the matching, on the found
+        ## spikes with "denoised" svd components obtained after removing the effect of nearby spikes. Here, we only
+        ## use it once, on the peaks. Despite the fact that this is the same clustering code, the adaptation to the second
+        ## case has been discarded here in this implementation for simplicity.
 
         # from spikeinterface.sortingcomponents.peak_localization import localize_peaks
         # locations = localize_peaks(recording, peaks, method='grid_convolution', 
