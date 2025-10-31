@@ -5,9 +5,6 @@ import importlib
 from spikeinterface.core import (
     get_noise_levels,
     NumpySorting,
-    estimate_templates_with_accumulator,
-    Templates,
-    compute_sparsity,
 )
 
 from spikeinterface.core.job_tools import fix_job_kwargs
@@ -40,29 +37,31 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
 
     _default_params = {
         "apply_motion_correction": False,
+        "apply_preprocessing": True,
         "motion_correction": {"preset": "kilosort_like"},
-        "filtering": {"freq_min": 150.0, "freq_max": 10000.0, "ftype":"bessel", "filter_order": 2,},
+        "filtering": {"freq_min": 150.0, "freq_max": 7000, "ftype": "bessel", "filter_order": 2, "margin_ms": 20},
         "waveforms": {
-            "ms_before": 2.,
-            "ms_after": 2.,
+            "ms_before": 1.,
+            "ms_after": 1.,
             "radius_um": 100.0,
         },
-        "detection": {"peak_sign":"neg", "detect_threshold": 6},
-        "selection": {"n_peaks_per_channel": 5000, "min_n_peaks": 20000},
+        "detection": {"peak_sign":"neg", "detect_threshold": 5},
+        "selection": {"n_peaks_per_channel": 5000, "min_n_peaks": 100000, "select_per_channel": False},
         "clustering": {
-            "n_svd": 6,
+            "peaks_svd" : dict(n_components=6),
             "verbose": False,
             "engine": "torch",
-            # "torch_device": "cpu",
             "torch_device": "cuda",
-            "cluster_downsampling": 20,
-            "n_nearest_channels" : 10
+            "cluster_downsampling": 1,
+            "n_nearest_channels" : 10,
+            "max_cluster_subset": 25000,
+            "cluster_neighbors": 10,
+            "dminx": 32,
+            "min_cluster_size": 20,
         },
-        "templates": {
-            "sparsity_threshold": 1.5,
-        },
+        "cleaning" : {"min_snr" : 3, "max_jitter_ms" : 0.1, "sparsify_threshold" : None},
         "matching": {
-            "Th" : 10, # the real KS has 8 here but 10 seems better
+            "Th" : 8, # the real KS has 8 here but 10 seems better
             "max_iter" : 100,
             "engine" : "torch",
             "torch_device" : "cpu",
@@ -73,6 +72,8 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
     }
 
     _params_description = {
+        "apply_preprocessing": "Boolean to specify whether to preprocess the recording or not. If yes, then high_pass filtering + common\
+                                                    median reference + whitening",
         "apply_motion_correction": "Apply motion correction or not",
         "motion_correction" : "Parameters for motion estimation/correction",
         "waveforms": "A dictonary containing waveforms params: ms_before, ms_after, radius_um",
@@ -101,13 +102,10 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         from spikeinterface.sortingcomponents.clustering.main import find_clusters_from_peaks
         from spikeinterface.sortingcomponents.matching import find_spikes_from_templates
         from spikeinterface.sortingcomponents.clustering.tools import get_templates_from_peaks_and_svd
-        from spikeinterface.sortingcomponents.tools import remove_empty_templates
         from spikeinterface.preprocessing import correct_motion
         from spikeinterface.sortingcomponents.motion import InterpolateMotionRecording
         from spikeinterface.sortingcomponents.tools import clean_templates
-
         
-
         job_kwargs = params["job_kwargs"].copy()
         job_kwargs = fix_job_kwargs(job_kwargs)
         job_kwargs["progress_bar"] = verbose
@@ -118,26 +116,26 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         sampling_frequency = recording_raw.get_sampling_frequency()
 
         # preprocessing
-        if params["apply_motion_correction"]:
-            rec_for_motion = recording_raw
+        if params["apply_preprocessing"]:
+            recording_f = recording_raw
+            recording_f = bandpass_filter(recording_f, **params["filtering"], dtype="float32")
+            recording_f = common_reference(recording_f)
+        else:
+            recording_f = recording_raw
+            recording_f.annotate(is_filtered=True)
 
-            rec_for_motion = bandpass_filter(rec_for_motion, freq_min=300.0, freq_max=6000.0, dtype="float32")
-            rec_for_motion = common_reference(rec_for_motion)
+        if params["apply_motion_correction"]:
+            
             if verbose:
-                print("Start : correct motion")
+                print("Starting motion correction")
+
             _, motion_info = correct_motion(
-                rec_for_motion,
+                recording_f,
                 folder=sorter_output_folder / "motion",
                 output_motion_info=True,
                 **params["motion_correction"],
             )
-            if verbose:
-                print("Done : correct motion")
 
-        recording = bandpass_filter(recording_raw, **params["filtering"], dtype="float32")
-        recording = common_reference(recording)
-
-        if params["apply_motion_correction"]:
             interpolate_motion_kwargs = dict(
                 border_mode="force_extrapolate",
                 spatial_interpolation_method="kriging",
@@ -145,13 +143,13 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
                 p=2,
             )
 
-            recording = InterpolateMotionRecording(
-                recording,
+            recording_f = InterpolateMotionRecording(
+                recording_f,
                 motion_info["motion"],
                 **interpolate_motion_kwargs,
             )
 
-        recording = whiten(recording, dtype="float32", mode="local", radius_um=100.0)
+        recording = whiten(recording_f, dtype="float32", mode="local", radius_um=100.0)
 
         # Save the preprocessed recording
         cache_folder = sorter_output_folder / "cache_preprocessing"
@@ -194,8 +192,8 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             print(f"select subset of peaks: {len(peaks)} peaks kept for clustering")
 
         clustering_kwargs = params["clustering"].copy()
-        clustering_kwargs["ms_before"] = ms_before
-        clustering_kwargs["ms_after"] = ms_after
+        clustering_kwargs["peaks_svd"]["ms_before"] = ms_before
+        clustering_kwargs["peaks_svd"]["ms_after"] = ms_after
         unit_ids, clustering_label, more_outs = find_clusters_from_peaks(
             recording, peaks, method="kilosort-clustering", method_kwargs=clustering_kwargs, extra_outputs=True, job_kwargs=job_kwargs,
         )
@@ -211,7 +209,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             print(f"find_clusters_from_peaks(): {sorting_pre_peeler.unit_ids.size} cluster found")
 
         # create th template from the median of SVD
-        templates_dense, _ = get_templates_from_peaks_and_svd(
+        templates_dense, new_sparse_mask = get_templates_from_peaks_and_svd(
             recording,
             peaks,
             clustering_label,
@@ -222,19 +220,24 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             more_outs["peak_svd_sparse_mask"],
             operator="median",
         )
+
+        templates = templates_dense.to_sparse(new_sparse_mask)
+
         # and clean small ones
-        templates = clean_templates(templates_dense, 
-                    sparsify_threshold=0.1,
-                    noise_levels=noise_levels, 
-                    min_snr=4.,
-                    max_jitter_ms=0.5, 
-                    remove_empty=True)
+        cleaning_kwargs = params.get("cleaning", {}).copy()
+        cleaning_kwargs["noise_levels"] = noise_levels
+        cleaning_kwargs["remove_empty"] = True
+        templates = clean_templates(
+            templates,
+            **cleaning_kwargs
+        )
+        
         if verbose:
             print("Kept %d clean clusters" % len(templates.unit_ids))
 
         ## Step : template matching
         # peeler kilosort4 need temporal_components
-        n_svd = params["clustering"]["n_svd"]
+        n_svd = clustering_kwargs["peaks_svd"]["n_components"]
         from sklearn.cluster import KMeans
         from sklearn.decomposition import TruncatedSVD
         wfs = waveforms / np.linalg.norm(waveforms, axis=1)[:, None]
@@ -260,6 +263,8 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         final_spikes["segment_index"] = spikes["segment_index"]
         sorting = NumpySorting(final_spikes, sampling_frequency, templates.unit_ids)
 
+        if verbose:
+            print("Found %d spikes" % len(final_spikes))
 
         ## Step auto merge
         if params["apply_final_auto_merge"]:
@@ -267,9 +272,6 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
 
             # max_distance_um = merging_params.get("max_distance_um", 50)
             # merging_params["max_distance_um"] = max(max_distance_um, 2 * max_motion)
-
-            if verbose:
-                print("Start : final merge")
 
             analyzer_final =  final_cleaning_circus(
                 recording,
@@ -279,14 +281,14 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
                 sparsity_overlap=0.5,
                 censor_ms=3.0,
                 max_distance_um=50,
-                template_diff_thresh=np.arange(0.05, 0.4, 0.05),
+                template_diff_thresh=np.arange(0.05, 0.5, 0.05),
                 debug_folder=None,
                 job_kwargs=job_kwargs,
             )
             sorting = NumpySorting.from_sorting(analyzer_final.sorting)
 
             if verbose:
-                print("Done : final merge")
+                print(f"Kept {len(sorting.unit_ids)} units after final merging")
 
 
         if params["save_array"]:
