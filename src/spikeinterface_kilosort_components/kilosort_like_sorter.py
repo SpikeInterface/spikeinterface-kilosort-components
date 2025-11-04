@@ -38,6 +38,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
     _default_params = {
         "apply_motion_correction": False,
         "apply_preprocessing": True,
+        "apply_whitening": True,
         "motion_correction": {"preset": "kilosort_like"},
         "filtering": {"freq_min": 150.0, "freq_max": 7000, "ftype": "bessel", "filter_order": 2, "margin_ms": 20},
         "waveforms": {
@@ -124,13 +125,16 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
             recording_f = recording_raw
             recording_f.annotate(is_filtered=True)
 
+        if params["apply_whitening"]:
+            recording_w = whiten(recording_f, dtype="float32", mode="local", radius_um=100.0)
+
         if params["apply_motion_correction"]:
             
             if verbose:
                 print("Starting motion correction")
 
             _, motion_info = correct_motion(
-                recording_f,
+                recording_w,
                 folder=sorter_output_folder / "motion",
                 output_motion_info=True,
                 **params["motion_correction"],
@@ -143,13 +147,13 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
                 p=2,
             )
 
-            recording_f = InterpolateMotionRecording(
-                recording_f,
+            recording = InterpolateMotionRecording(
+                recording_w,
                 motion_info["motion"],
                 **interpolate_motion_kwargs,
             )
-
-        recording = whiten(recording_f, dtype="float32", mode="local", radius_um=100.0)
+        else:
+            recording = recording_w
 
         # Save the preprocessed recording
         cache_folder = sorter_output_folder / "cache_preprocessing"
