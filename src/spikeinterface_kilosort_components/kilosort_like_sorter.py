@@ -62,7 +62,7 @@ class Kilosort4LikeSorter(ComponentsBasedSorter):
         },
         "cleaning" : {"min_snr" : 3, "max_jitter_ms" : 0.1, "sparsify_threshold" : None},
         "matching": {
-            "Th" : 8, # the real KS has 8 here but 10 seems better
+            "Th" : 10, # the real KS has 8 here but 10 seems better
             "max_iter" : 100,
             "engine" : "torch",
             "torch_device" : "cpu",

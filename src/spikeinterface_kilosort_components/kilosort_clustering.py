@@ -26,7 +26,7 @@ if torch_spec is not None:
     if torch_nn_functional_spec is not None:
         HAVE_TORCH = True
         import torch
-        from torch.nn.functional import conv1d, max_pool1d
+        from torch.nn.functional import conv1d
     else:
         HAVE_TORCH = False
 else:
