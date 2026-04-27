@@ -188,7 +188,7 @@ class KiloSortMatching(BaseTemplateMatching):
 
         self.is_pushed = False
 
-    def get_trace_margin(self):
+    def get_margin(self):
         return self.margin
 
     def clean(self):
